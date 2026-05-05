@@ -184,6 +184,49 @@ static int ClampLimit(int? requested, int defaultValue, int maxValue) =>
 static int ClampOffset(int? requested) =>
     requested is >= 0 ? requested.Value : 0;
 
+static DateTime EnsureUtc(DateTime dt) => dt.Kind switch
+{
+    DateTimeKind.Utc => dt,
+    DateTimeKind.Local => dt.ToUniversalTime(),
+    _ => DateTime.SpecifyKind(dt, DateTimeKind.Utc),
+};
+
+/// <summary>Prefer fromUtc+toUtc when both supplied; otherwise rolling window from UTC now using hours.</summary>
+static bool TryResolveTimeWindow(DateTime? fromUtc, DateTime? toUtc, int? hours, int maxSpanHours, out DateTime from, out DateTime to, out string? error)
+{
+    error = null;
+    var now = DateTime.UtcNow;
+    if (fromUtc.HasValue && toUtc.HasValue)
+    {
+        from = EnsureUtc(fromUtc.Value);
+        to = EnsureUtc(toUtc.Value);
+        if (to > now)
+            to = now;
+        if (from >= to)
+        {
+            error = "fromUtc must be before toUtc.";
+            return false;
+        }
+        var maxSpan = TimeSpan.FromHours(Math.Max(1, maxSpanHours));
+        if (to - from > maxSpan)
+        {
+            error = $"Time range exceeds maximum of {maxSpanHours} hours.";
+            return false;
+        }
+        if (to - from < TimeSpan.FromMinutes(1))
+        {
+            error = "Time range must be at least one minute.";
+            return false;
+        }
+        return true;
+    }
+
+    var h = Math.Clamp(hours ?? 24, 1, Math.Max(1, maxSpanHours));
+    to = now;
+    from = to.AddHours(-h);
+    return true;
+}
+
 async Task<List<Dictionary<string, object?>>> QueryAsync(string sql, int commandTimeoutSeconds = 30, params (string name, object? value)[] parameters)
 {
     using var conn = new SqlConnection(connStr);
@@ -674,19 +717,20 @@ app.MapGet("/api/instances/{id:int}", async (int id) =>
     }
 }).RequireAuthorization();
 
-app.MapGet("/api/instances/{id:int}/cpu", async (int id, int? hours) =>
+app.MapGet("/api/instances/{id:int}/cpu", async (int id, int? hours, DateTime? fromUtc, DateTime? toUtc) =>
 {
-    var h = Math.Min(hours ?? 24, 336);
+    if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 336, out var from, out var to, out var err))
+        return Results.BadRequest(new { error = err });
     try
     {
-        // ~1 sample/minute typical; cap rows for chart performance (full range still bounded by hours)
-        var maxPoints = Math.Min(h * 60 + 120, 100_000);
+        var spanMin = Math.Max(1, (int)Math.Ceiling((to - from).TotalMinutes));
+        var maxPoints = Math.Min(spanMin + 120, 100_000);
         var data = await QueryAsync($@"
             SELECT TOP ({maxPoints}) EventTime, SQLProcessCPU, SystemIdleCPU,
                    (100 - SQLProcessCPU - SystemIdleCPU) AS OtherCPU,
                    (100 - SystemIdleCPU) AS TotalCPU
-            FROM dbo.CPU WHERE InstanceID = @id AND EventTime > DATEADD(hour, -@hours, GETUTCDATE())
-            ORDER BY EventTime DESC", 120, ("@id", id), ("@hours", h));
+            FROM dbo.CPU WHERE InstanceID = @id AND EventTime >= @from AND EventTime <= @to
+            ORDER BY EventTime DESC", 120, ("@id", id), ("@from", from), ("@to", to));
         return Results.Ok(data);
     }
     catch (Exception ex)
@@ -695,9 +739,10 @@ app.MapGet("/api/instances/{id:int}/cpu", async (int id, int? hours) =>
     }
 }).RequireAuthorization();
 
-app.MapGet("/api/instances/{id:int}/waits", async (int id, int? hours, int? top) =>
+app.MapGet("/api/instances/{id:int}/waits", async (int id, int? hours, int? top, DateTime? fromUtc, DateTime? toUtc) =>
 {
-    var h = Math.Min(hours ?? 24, 336);
+    if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 336, out var from, out var to, out var err))
+        return Results.BadRequest(new { error = err });
     var topN = ClampLimit(top, 200, 5000);
     try
     {
@@ -708,9 +753,9 @@ app.MapGet("/api/instances/{id:int}/waits", async (int id, int? hours, int? top)
                    SUM(w.signal_wait_time_ms) as TotalSignalWaitMs
             FROM dbo.Waits w
             LEFT JOIN dbo.WaitType wt ON w.WaitTypeID = wt.WaitTypeID
-            WHERE w.InstanceID = @id AND w.SnapshotDate > DATEADD(hour, -@hours, GETUTCDATE())
+            WHERE w.InstanceID = @id AND w.SnapshotDate >= @from AND w.SnapshotDate <= @to
             GROUP BY w.WaitTypeID, wt.WaitType
-            ORDER BY SUM(w.wait_time_ms) DESC", 120, ("@id", id), ("@hours", h));
+            ORDER BY SUM(w.wait_time_ms) DESC", 120, ("@id", id), ("@from", from), ("@to", to));
         return Results.Ok(data);
     }
     catch (Exception ex)
@@ -868,17 +913,16 @@ app.MapGet("/api/instances/{id:int}/last-checkdb", async (int id) =>
     }
 }).RequireAuthorization();
 
-app.MapGet("/api/instances/{id:int}/drives/{driveId:int}/snapshots", async (int id, int driveId, int? hours) =>
+app.MapGet("/api/instances/{id:int}/drives/{driveId:int}/snapshots", async (int id, int driveId, int? hours, DateTime? fromUtc, DateTime? toUtc) =>
 {
-    var h = Math.Clamp(hours ?? 168, 1, 8760);
+    if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 8760, out var from, out var to, out var err))
+        return Results.BadRequest(new { error = err });
     try
     {
         var ok = await QueryAsync("SELECT 1 AS x FROM dbo.Drives WHERE DriveID = @d AND InstanceID = @i", 15, ("@d", driveId), ("@i", id));
         if (ok.Count == 0)
             return Results.Json(new { error = "Drive not found for this instance.", data = Array.Empty<object>(), note = "" }, statusCode: 404);
 
-        var to = DateTime.UtcNow;
-        var from = to.AddHours(-h);
         var data = await SpAsync("dbo.DriveSnapshot_Get", 120,
             ("@DriveID", driveId), ("@FromDate", from), ("@ToDate", to), ("@DateGroupingMins", 1440));
         return Results.Ok(new { data, note = "dbo.DriveSnapshot_Get", fromDate = from, toDate = to });
@@ -889,13 +933,12 @@ app.MapGet("/api/instances/{id:int}/drives/{driveId:int}/snapshots", async (int 
     }
 }).RequireAuthorization();
 
-app.MapGet("/api/instances/{id:int}/cpu-sp", async (int id, int? hours) =>
+app.MapGet("/api/instances/{id:int}/cpu-sp", async (int id, int? hours, DateTime? fromUtc, DateTime? toUtc) =>
 {
-    var h = Math.Clamp(hours ?? 24, 1, 336);
+    if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 336, out var from, out var to, out var err))
+        return Results.BadRequest(new { error = err });
     try
     {
-        var from = DateTime.UtcNow.AddHours(-h);
-        var to = DateTime.UtcNow;
         var data = await SpAsyncCpuGet(id, from, to, 120);
         return Results.Ok(new { data, note = "dbo.CPU_Get", fromDate = from, toDate = to });
     }
@@ -1541,14 +1584,13 @@ app.MapGet("/api/performance/running-queries", async (int? instanceId, int? limi
 }).RequireAuthorization();
 
 // ── Performance: Running Queries Summary (dbo.RunningQueriesSummary_Get — DBA Dash Windows GUI) ──
-app.MapGet("/api/performance/running-queries-summary", async (int instanceId, int? hours, int? limit) =>
+app.MapGet("/api/performance/running-queries-summary", async (int instanceId, int? hours, int? limit, DateTime? fromUtc, DateTime? toUtc) =>
 {
     try
     {
-        var h = Math.Min(Math.Max(hours ?? 24, 1), 336);
+        if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 336, out var from, out var to, out var winErr))
+            return Results.BadRequest(new { data = Array.Empty<object>(), note = winErr ?? "" });
         var maxRows = ClampLimit(limit, 2000, 50_000);
-        var to = DateTime.UtcNow;
-        var from = to.AddHours(-h);
         var data = await SpAsync("dbo.RunningQueriesSummary_Get", 120,
             ("@InstanceID", instanceId),
             ("@FromDate", from),
@@ -1608,9 +1650,10 @@ app.MapGet("/api/performance/blocking", async (int? instanceId, int? limit, int?
 
 // ── Performance: Slow Queries ────────────────────────────────────────────
 
-app.MapGet("/api/performance/slow-queries", async (int? instanceId, int? hours, int? limit, int? offset) =>
+app.MapGet("/api/performance/slow-queries", async (int? instanceId, int? hours, int? limit, int? offset, DateTime? fromUtc, DateTime? toUtc) =>
 {
-    var h = hours ?? 24;
+    if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 8760, out var from, out var to, out var err))
+        return Results.BadRequest(new { error = err, data = Array.Empty<object>(), note = "" });
     try
     {
         var take = ClampLimit(limit, 2000, 50_000);
@@ -1621,10 +1664,10 @@ app.MapGet("/api/performance/slow-queries", async (int? instanceId, int? hours, 
             FROM dbo.SlowQueries sq
             JOIN dbo.Instances i ON sq.InstanceID = i.InstanceID
             LEFT JOIN dbo.Databases d ON sq.DatabaseID = d.DatabaseID AND sq.InstanceID = d.InstanceID
-            WHERE sq.timestamp > DATEADD(hour,-@hours,GETUTCDATE()) {filter}
+            WHERE sq.timestamp >= @from AND sq.timestamp <= @to {filter}
             ORDER BY sq.duration DESC
             OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY";
-        var data = await QueryAsync(sql, 120, ("@instanceId", instanceId ?? (object)DBNull.Value), ("@hours", h), ("@skip", skip), ("@take", take));
+        var data = await QueryAsync(sql, 120, ("@instanceId", instanceId ?? (object)DBNull.Value), ("@from", from), ("@to", to), ("@skip", skip), ("@take", take));
         return Results.Ok(new { data, note = "" });
     }
     catch (Exception ex)
@@ -1636,9 +1679,10 @@ app.MapGet("/api/performance/slow-queries", async (int? instanceId, int? hours, 
 
 // ── Performance: Memory ──────────────────────────────────────────────────
 
-app.MapGet("/api/performance/memory", async (int? instanceId, int? hours, int? limit) =>
+app.MapGet("/api/performance/memory", async (int? instanceId, int? hours, int? limit, DateTime? fromUtc, DateTime? toUtc) =>
 {
-    var h = Math.Min(hours ?? 24, 336);
+    if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 336, out var from, out var to, out var err))
+        return Results.BadRequest(new { error = err, clerks = Array.Empty<object>(), counters = Array.Empty<object>(), clerkNote = "", counterNote = "" });
     var take = ClampLimit(limit, 5000, 100_000);
     var clerks = Array.Empty<object>() as object;
     var counters = Array.Empty<object>() as object;
@@ -1655,10 +1699,10 @@ app.MapGet("/api/performance/memory", async (int? instanceId, int? hours, int? l
             FROM dbo.MemoryUsage mu
             JOIN dbo.Instances i ON mu.InstanceID = i.InstanceID
             JOIN dbo.MemoryClerkType mct ON mu.MemoryClerkTypeID = mct.MemoryClerkTypeID
-            WHERE mu.SnapshotDate > DATEADD(hour,-@hours,GETUTCDATE()) {filter}
+            WHERE mu.SnapshotDate >= @from AND mu.SnapshotDate <= @to {filter}
             ORDER BY mu.pages_kb DESC
             OFFSET 0 ROWS FETCH NEXT @take ROWS ONLY";
-        clerks = await QueryAsync(sql, 120, ("@instanceId", instanceId ?? (object)DBNull.Value), ("@hours", h), ("@take", take));
+        clerks = await QueryAsync(sql, 120, ("@instanceId", instanceId ?? (object)DBNull.Value), ("@from", from), ("@to", to), ("@take", take));
     }
     catch (Exception ex)
     {
@@ -1675,10 +1719,10 @@ app.MapGet("/api/performance/memory", async (int? instanceId, int? hours, int? l
             JOIN dbo.Instances i ON pc.InstanceID = i.InstanceID
             JOIN dbo.Counters c ON pc.CounterID = c.CounterID
             WHERE c.object_name LIKE '%Memory%'
-              AND pc.SnapshotDate > DATEADD(hour,-@hours,GETUTCDATE()) {filter}
+              AND pc.SnapshotDate >= @from AND pc.SnapshotDate <= @to {filter}
             ORDER BY pc.SnapshotDate DESC
             OFFSET 0 ROWS FETCH NEXT @take ROWS ONLY";
-        counters = await QueryAsync(sql, 120, ("@instanceId", instanceId ?? (object)DBNull.Value), ("@hours", h), ("@take", take));
+        counters = await QueryAsync(sql, 120, ("@instanceId", instanceId ?? (object)DBNull.Value), ("@from", from), ("@to", to), ("@take", take));
     }
     catch (Exception ex)
     {
@@ -1690,9 +1734,10 @@ app.MapGet("/api/performance/memory", async (int? instanceId, int? hours, int? l
 
 // ── Performance: IO ──────────────────────────────────────────────────────
 
-app.MapGet("/api/performance/io", async (int? instanceId, int? hours, int? limit) =>
+app.MapGet("/api/performance/io", async (int? instanceId, int? hours, int? limit, DateTime? fromUtc, DateTime? toUtc) =>
 {
-    var h = Math.Min(hours ?? 24, 336);
+    if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 336, out var from, out var to, out var err))
+        return Results.BadRequest(new { error = err, fileStats = Array.Empty<object>(), drivePerf = Array.Empty<object>(), fileNote = "", driveNote = "" });
     var take = ClampLimit(limit, 5000, 100_000);
     var fileStats = Array.Empty<object>() as object;
     var drivePerf = Array.Empty<object>() as object;
@@ -1711,10 +1756,10 @@ app.MapGet("/api/performance/io", async (int? instanceId, int? hours, int? limit
             JOIN dbo.Instances i ON ios.InstanceID = i.InstanceID
             JOIN dbo.DBFiles df ON ios.FileID = df.FileID
             JOIN dbo.Databases d ON df.DatabaseID = d.DatabaseID
-            WHERE ios.SnapshotDate > DATEADD(hour,-@hours,GETUTCDATE()) {filter}
+            WHERE ios.SnapshotDate >= @from AND ios.SnapshotDate <= @to {filter}
             ORDER BY (ios.io_stall_read_ms + ios.io_stall_write_ms) DESC
             OFFSET 0 ROWS FETCH NEXT @take ROWS ONLY";
-        fileStats = await QueryAsync(sql, 120, ("@instanceId", instanceId ?? (object)DBNull.Value), ("@hours", h), ("@take", take));
+        fileStats = await QueryAsync(sql, 120, ("@instanceId", instanceId ?? (object)DBNull.Value), ("@from", from), ("@to", to), ("@take", take));
     }
     catch (Exception ex1)
     {
@@ -1729,10 +1774,10 @@ app.MapGet("/api/performance/io", async (int? instanceId, int? hours, int? limit
             SELECT dp.*, i.InstanceDisplayName
             FROM dbo.DriveSnapshot dp
             JOIN dbo.Instances i ON dp.InstanceID = i.InstanceID
-            WHERE dp.SnapshotDate > DATEADD(hour,-@hours,GETUTCDATE()) {filter}
+            WHERE dp.SnapshotDate >= @from AND dp.SnapshotDate <= @to {filter}
             ORDER BY dp.SnapshotDate DESC
             OFFSET 0 ROWS FETCH NEXT @take ROWS ONLY";
-        drivePerf = await QueryAsync(sql, 120, ("@instanceId", instanceId ?? (object)DBNull.Value), ("@hours", h), ("@take", take));
+        drivePerf = await QueryAsync(sql, 120, ("@instanceId", instanceId ?? (object)DBNull.Value), ("@from", from), ("@to", to), ("@take", take));
     }
     catch (Exception ex)
     {
@@ -1743,9 +1788,10 @@ app.MapGet("/api/performance/io", async (int? instanceId, int? hours, int? limit
 }).RequireAuthorization();
 
 // ── Exec Stats ───────────────────────────────────────────────────────────
-app.MapGet("/api/performance/exec-stats", async (int? instanceId, int? hours, int? limit, int? offset) =>
+app.MapGet("/api/performance/exec-stats", async (int? instanceId, int? hours, int? limit, int? offset, DateTime? fromUtc, DateTime? toUtc) =>
 {
-    var h = hours ?? 24;
+    if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 8760, out var from, out var to, out var err))
+        return Results.BadRequest(new { error = err, data = Array.Empty<object>(), note = "" });
     var take = ClampLimit(limit, 5000, 100_000);
     var skip = ClampOffset(offset);
     var data = Array.Empty<object>() as object;
@@ -1761,10 +1807,10 @@ app.MapGet("/api/performance/exec-stats", async (int? instanceId, int? hours, in
             FROM dbo.ObjectExecutionStats os
             JOIN dbo.Instances i ON os.InstanceID=i.InstanceID
             JOIN dbo.DBObjects dbo_obj ON os.ObjectID=dbo_obj.ObjectID
-            WHERE os.SnapshotDate > DATEADD(hour,-@hours,GETUTCDATE()) {filter}
+            WHERE os.SnapshotDate >= @from AND os.SnapshotDate <= @to {filter}
             ORDER BY os.total_worker_time DESC
             OFFSET @skip ROWS FETCH NEXT @take ROWS ONLY";
-        data = await QueryAsync(sql, 120, ("@hours", h), ("@instanceId", instanceId ?? (object)DBNull.Value), ("@skip", skip), ("@take", take));
+        data = await QueryAsync(sql, 120, ("@from", from), ("@to", to), ("@instanceId", instanceId ?? (object)DBNull.Value), ("@skip", skip), ("@take", take));
     }
     catch (Exception ex)
     {
@@ -1774,13 +1820,14 @@ app.MapGet("/api/performance/exec-stats", async (int? instanceId, int? hours, in
 }).RequireAuthorization();
 
 // ── Waits Timeline ───────────────────────────────────────────────────────
-app.MapGet("/api/performance/waits-timeline", async (int? instanceId, int? hours) =>
+app.MapGet("/api/performance/waits-timeline", async (int? instanceId, int? hours, DateTime? fromUtc, DateTime? toUtc) =>
 {
-    var h = hours ?? 24;
     var data = Array.Empty<object>() as object;
     var note = "";
 
     if (!instanceId.HasValue) return Results.Ok(new { data, note = "instanceId required" });
+    if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 336, out var from, out var to, out var err))
+        return Results.BadRequest(new { data = Array.Empty<object>(), note = err ?? "" });
 
     try
     {
@@ -1789,9 +1836,9 @@ app.MapGet("/api/performance/waits-timeline", async (int? instanceId, int? hours
                    w.waiting_tasks_count, w.signal_wait_time_ms
             FROM dbo.Waits w
             JOIN dbo.WaitType wt ON w.WaitTypeID=wt.WaitTypeID
-            WHERE w.InstanceID=@instanceId AND w.SnapshotDate > DATEADD(hour,-@hours,GETUTCDATE())
+            WHERE w.InstanceID=@instanceId AND w.SnapshotDate >= @from AND w.SnapshotDate <= @to
             ORDER BY w.SnapshotDate";
-        data = await QueryAsync(sql, 120, ("@instanceId", instanceId.Value), ("@hours", h));
+        data = await QueryAsync(sql, 120, ("@instanceId", instanceId.Value), ("@from", from), ("@to", to));
     }
     catch (Exception ex)
     {
@@ -1801,13 +1848,14 @@ app.MapGet("/api/performance/waits-timeline", async (int? instanceId, int? hours
 }).RequireAuthorization();
 
 // ── Performance Counters ─────────────────────────────────────────────────
-app.MapGet("/api/performance/counters", async (int? instanceId, int? hours) =>
+app.MapGet("/api/performance/counters", async (int? instanceId, int? hours, DateTime? fromUtc, DateTime? toUtc) =>
 {
-    var h = hours ?? 24;
     var data = Array.Empty<object>() as object;
     var note = "";
 
     if (!instanceId.HasValue) return Results.Ok(new { data, note = "instanceId required" });
+    if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 336, out var from, out var to, out var err))
+        return Results.BadRequest(new { data = Array.Empty<object>(), note = err ?? "" });
 
     try
     {
@@ -1817,9 +1865,9 @@ app.MapGet("/api/performance/counters", async (int? instanceId, int? hours) =>
             FROM dbo.PerformanceCounters pc
             JOIN dbo.Instances i ON pc.InstanceID=i.InstanceID
             JOIN dbo.Counters c ON pc.CounterID=c.CounterID
-            WHERE pc.InstanceID=@instanceId AND pc.SnapshotDate > DATEADD(hour,-@hours,GETUTCDATE())
+            WHERE pc.InstanceID=@instanceId AND pc.SnapshotDate >= @from AND pc.SnapshotDate <= @to
             ORDER BY pc.SnapshotDate";
-        data = await QueryAsync(sql, 120, ("@instanceId", instanceId.Value), ("@hours", h));
+        data = await QueryAsync(sql, 120, ("@instanceId", instanceId.Value), ("@from", from), ("@to", to));
     }
     catch (Exception ex)
     {
@@ -1829,13 +1877,14 @@ app.MapGet("/api/performance/counters", async (int? instanceId, int? hours) =>
 }).RequireAuthorization();
 
 // ── Job Timeline ─────────────────────────────────────────────────────────
-app.MapGet("/api/monitoring/job-timeline", async (int? instanceId, int? hours) =>
+app.MapGet("/api/monitoring/job-timeline", async (int? instanceId, int? hours, DateTime? fromUtc, DateTime? toUtc) =>
 {
-    var h = hours ?? 24;
     var data = Array.Empty<object>() as object;
     var note = "";
 
     if (!instanceId.HasValue) return Results.Ok(new { data, note = "instanceId required" });
+    if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 336, out var from, out var to, out var err))
+        return Results.BadRequest(new { data = Array.Empty<object>(), note = err ?? "" });
 
     try
     {
@@ -1846,9 +1895,9 @@ app.MapGet("/api/monitoring/job-timeline", async (int? instanceId, int? hours) =
             FROM dbo.JobHistory jh
             JOIN dbo.Instances i ON jh.InstanceID=i.InstanceID
             JOIN dbo.Jobs j ON jh.job_id=j.job_id AND jh.InstanceID=j.InstanceID
-            WHERE jh.InstanceID=@instanceId AND jh.RunDateTime > DATEADD(hour,-@hours,GETUTCDATE()) AND jh.step_id=0
+            WHERE jh.InstanceID=@instanceId AND jh.RunDateTime >= @from AND jh.RunDateTime <= @to AND jh.step_id=0
             ORDER BY jh.RunDateTime";
-        data = await QueryAsync(sql, 120, ("@instanceId", instanceId.Value), ("@hours", h));
+        data = await QueryAsync(sql, 120, ("@instanceId", instanceId.Value), ("@from", from), ("@to", to));
     }
     catch (Exception ex)
     {
@@ -2335,9 +2384,10 @@ app.MapGet("/api/reports/underutilized", async () =>
     }
 }).RequireAuthorization();
 
-app.MapGet("/api/reports/fleet-stats", async (int? hours) =>
+app.MapGet("/api/reports/fleet-stats", async (int? hours, DateTime? fromUtc, DateTime? toUtc) =>
 {
-    var h = Math.Min(hours ?? 24, 336);
+    if (!TryResolveTimeWindow(fromUtc, toUtc, hours, 336, out var from, out var to, out var err))
+        return Results.BadRequest(new { error = err, data = Array.Empty<object>() });
     try
     {
         var cpuData = await QueryAsync(@"
@@ -2348,10 +2398,10 @@ app.MapGet("/api/reports/fleet-stats", async (int? hours) =>
                    AVG(CAST(c.SQLProcessCPU as float)) as AvgCPU24h,
                    MAX(c.SQLProcessCPU) as MaxCPU24h
             FROM dbo.InstanceInfo i
-            LEFT JOIN dbo.CPU c ON i.InstanceID = c.InstanceID AND c.EventTime >= DATEADD(hour, -@hours, GETUTCDATE())
+            LEFT JOIN dbo.CPU c ON i.InstanceID = c.InstanceID AND c.EventTime >= @from AND c.EventTime <= @to
             WHERE i.IsActive = 1
             GROUP BY i.InstanceID, i.InstanceDisplayName, i.Instance, i.Edition, i.ProductVersion, i.cpu_count, i.physical_memory_kb
-            ORDER BY AVG(CAST(c.SQLProcessCPU as float)) DESC", 120, ("@hours", h));
+            ORDER BY AVG(CAST(c.SQLProcessCPU as float)) DESC", 120, ("@from", from), ("@to", to));
 
         // Get storage data
         var storageData = new Dictionary<int, (long capacity, long free, long used)>();
@@ -2399,10 +2449,10 @@ app.MapGet("/api/reports/fleet-stats", async (int? hours) =>
                        AVG(CAST(c.SQLProcessCPU as float)) as AvgCPU24h,
                        MAX(c.SQLProcessCPU) as MaxCPU24h
                 FROM dbo.Instances i
-                LEFT JOIN dbo.CPU c ON i.InstanceID = c.InstanceID AND c.EventTime >= DATEADD(hour, -@hours, GETUTCDATE())
+                LEFT JOIN dbo.CPU c ON i.InstanceID = c.InstanceID AND c.EventTime >= @from AND c.EventTime <= @to
                 WHERE i.IsActive = 1
                 GROUP BY i.InstanceID, i.InstanceDisplayName, i.Instance, i.Edition, i.ProductVersion, i.cpu_count, i.physical_memory_kb
-                ORDER BY AVG(CAST(c.SQLProcessCPU as float)) DESC", 120, ("@hours", h));
+                ORDER BY AVG(CAST(c.SQLProcessCPU as float)) DESC", 120, ("@from", from), ("@to", to));
 
             var storageData = new Dictionary<int, (long capacity, long free, long used)>();
             try

@@ -3,7 +3,7 @@ import { api } from '../api/api';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EmptyState from '../components/EmptyState';
-import TimeRangeSelector, { hoursLabel } from '../components/TimeRangeSelector';
+import { useApiTimeWindow, rangeSpanLabel } from '../lib/timeRange';
 import { usePresentationOptional } from '../context/PresentationContext';
 import { motion } from 'framer-motion';
 import { Cpu } from 'lucide-react';
@@ -20,7 +20,7 @@ export default function CpuPerformancePage() {
   const { dataGridShellClass, isDesktopData } = usePresentationOptional();
   const [instances, setInstances] = useState<any[]>([]);
   const [id, setId] = useState<number | ''>('');
-  const [hours, setHours] = useState(24);
+  const tw = useApiTimeWindow();
   const [rawSeries, setRawSeries] = useState<any[]>([]);
   const [spRows, setSpRows] = useState<Record<string, unknown>[]>([]);
   const [note, setNote] = useState('');
@@ -39,7 +39,7 @@ export default function CpuPerformancePage() {
     }
     setLoading(true);
     setErr('');
-    Promise.all([api.instanceCpu(id, hours), api.instanceCpuSp(id, hours)])
+    Promise.all([api.instanceCpu(id, tw), api.instanceCpuSp(id, tw)])
       .then(([cpu, sp]) => {
         const rawCpu = Array.isArray(cpu) ? cpu : (cpu as { data?: unknown })?.data;
         const series = (Array.isArray(rawCpu) ? rawCpu : []).map((c: any) => ({
@@ -54,7 +54,7 @@ export default function CpuPerformancePage() {
       })
       .catch((e) => setErr(e?.message || 'Failed'))
       .finally(() => setLoading(false));
-  }, [id, hours]);
+  }, [id, tw.fromUtc, tw.toUtc]);
 
   const chartData = useMemo(() => rawSeries, [rawSeries]);
   const columns = useMemo(() => cols(spRows), [spRows]);
@@ -85,7 +85,6 @@ export default function CpuPerformancePage() {
             ))}
           </select>
         </div>
-        <TimeRangeSelector value={hours} onChange={setHours} />
       </div>
 
       {err && <div className="text-sm text-red-400">{err}</div>}
@@ -96,7 +95,9 @@ export default function CpuPerformancePage() {
       ) : id === '' ? null : (
         <>
           <div className={clsx('rounded-lg border p-4 h-[280px]', dataGridShellClass)}>
-            <h2 className="text-sm font-medium text-gray-300 mb-2">CPU % ({hoursLabel(hours)})</h2>
+            <h2 className="text-sm font-medium text-gray-300 mb-2">
+              CPU % ({rangeSpanLabel(new Date(tw.fromUtc), new Date(tw.toUtc))})
+            </h2>
             {chartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="85%">
                 <AreaChart data={chartData}>

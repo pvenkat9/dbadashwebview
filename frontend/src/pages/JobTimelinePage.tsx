@@ -4,6 +4,7 @@ import { api } from '../api/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { motion } from 'framer-motion';
 import { CalendarClock } from 'lucide-react';
+import { useApiTimeWindow } from '../lib/timeRange';
 
 const STATUS_COLORS: Record<number, { bg: string; text: string; label: string }> = {
   0: { bg: 'bg-red-500/20', text: 'text-red-400', label: 'Failed' },
@@ -21,7 +22,7 @@ export default function JobTimelinePage() {
   const [loading, setLoading] = useState(true);
   const [instances, setInstances] = useState<any[]>([]);
   const [selectedInstance, setSelectedInstance] = useState<number | undefined>(routeId ? Number(routeId) : undefined);
-  const [hours, setHours] = useState(24);
+  const tw = useApiTimeWindow();
 
   useEffect(() => {
     api.instances().then(i => setInstances(Array.isArray(i) ? i : [])).catch(() => {});
@@ -30,11 +31,11 @@ export default function JobTimelinePage() {
   useEffect(() => {
     if (!selectedInstance) { setData([]); setLoading(false); return; }
     setLoading(true);
-    api.monitoringJobTimeline(selectedInstance, hours)
+    api.monitoringJobTimeline(selectedInstance, tw)
       .then(r => { setData(Array.isArray(r.data) ? r.data : []); setNote(r.note || ''); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [selectedInstance, hours]);
+  }, [selectedInstance, tw.fromUtc, tw.toUtc]);
 
   // Build gantt data
   const { jobs, timeRange } = useMemo(() => {
@@ -83,9 +84,6 @@ export default function JobTimelinePage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <select value={hours} onChange={e => setHours(Number(e.target.value))} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-gray-300">
-            <option value={1}>1h</option><option value={6}>6h</option><option value={12}>12h</option><option value={24}>24h</option><option value={72}>3d</option>
-          </select>
           {!routeId && (
             <select value={selectedInstance ?? ''} onChange={e => setSelectedInstance(e.target.value ? Number(e.target.value) : undefined)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-gray-300">
               <option value="">Select Instance</option>

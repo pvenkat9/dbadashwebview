@@ -4,7 +4,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { motion } from 'framer-motion';
 import { HardDrive } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, CartesianGrid } from 'recharts';
-import TimeRangeSelector from '../components/TimeRangeSelector';
+import { useApiTimeWindow } from '../lib/timeRange';
 
 export default function MemoryPage() {
   const [clerks, setClerks] = useState<any[]>([]);
@@ -14,7 +14,7 @@ export default function MemoryPage() {
   const [loading, setLoading] = useState(true);
   const [instances, setInstances] = useState<any[]>([]);
   const [selectedInstance, setSelectedInstance] = useState<number | undefined>();
-  const [hours, setHours] = useState(24);
+  const tw = useApiTimeWindow();
 
   useEffect(() => {
     api.instances().then(i => setInstances(Array.isArray(i) ? i : [])).catch(() => {});
@@ -22,7 +22,7 @@ export default function MemoryPage() {
 
   useEffect(() => {
     setLoading(true);
-    api.performanceMemory(selectedInstance, hours, 25_000)
+    api.performanceMemory(selectedInstance, tw, 25_000)
       .then(r => {
         setClerks(Array.isArray(r.clerks) ? r.clerks : []);
         setCounters(Array.isArray(r.counters) ? r.counters : []);
@@ -31,7 +31,7 @@ export default function MemoryPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [selectedInstance, hours]);
+  }, [selectedInstance, tw.fromUtc, tw.toUtc]);
 
   if (loading) return <LoadingSpinner />;
 
@@ -78,7 +78,6 @@ export default function MemoryPage() {
               <option key={inst.InstanceID} value={inst.InstanceID}>{inst.InstanceDisplayName}</option>
             ))}
           </select>
-          <TimeRangeSelector value={hours} onChange={setHours} />
         </div>
       </div>
 

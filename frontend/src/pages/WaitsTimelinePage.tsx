@@ -4,6 +4,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { motion } from 'framer-motion';
 import { Clock } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { useApiTimeWindow } from '../lib/timeRange';
 
 const COLORS = ['#3b82f6','#ef4444','#f59e0b','#10b981','#8b5cf6','#ec4899','#06b6d4','#f97316','#84cc16','#6366f1'];
 
@@ -13,7 +14,7 @@ export default function WaitsTimelinePage() {
   const [loading, setLoading] = useState(true);
   const [instances, setInstances] = useState<any[]>([]);
   const [selectedInstance, setSelectedInstance] = useState<number | undefined>();
-  const [hours, setHours] = useState(24);
+  const tw = useApiTimeWindow();
 
   useEffect(() => {
     api.instances().then(i => setInstances(Array.isArray(i) ? i : [])).catch(() => {});
@@ -22,11 +23,11 @@ export default function WaitsTimelinePage() {
   useEffect(() => {
     if (!selectedInstance) { setData([]); setLoading(false); return; }
     setLoading(true);
-    api.performanceWaitsTimeline(selectedInstance, hours)
+    api.performanceWaitsTimeline(selectedInstance, tw)
       .then(r => { setData(Array.isArray(r.data) ? r.data : []); setNote(r.note || ''); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [selectedInstance, hours]);
+  }, [selectedInstance, tw.fromUtc, tw.toUtc]);
 
   // Get top wait types and build time-series
   const { chartData, waitTypes, totals } = useMemo(() => {
@@ -70,9 +71,6 @@ export default function WaitsTimelinePage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <select value={hours} onChange={e => setHours(Number(e.target.value))} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-gray-300">
-            <option value={1}>1h</option><option value={6}>6h</option><option value={12}>12h</option><option value={24}>24h</option><option value={72}>3d</option><option value={168}>7d</option><option value={336}>14d</option>
-          </select>
           <select value={selectedInstance ?? ''} onChange={e => setSelectedInstance(e.target.value ? Number(e.target.value) : undefined)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-gray-300">
             <option value="">Select Instance</option>
             {instances.map((inst: any) => <option key={inst.InstanceID} value={inst.InstanceID}>{inst.InstanceDisplayName || inst.InstanceID}</option>)}

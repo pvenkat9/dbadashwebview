@@ -4,7 +4,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { motion } from 'framer-motion';
 import { HardDrive } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from 'recharts';
-import TimeRangeSelector from '../components/TimeRangeSelector';
+import { useApiTimeWindow } from '../lib/timeRange';
 
 export default function IOPerformancePage() {
   const [fileStats, setFileStats] = useState<any[]>([]);
@@ -14,7 +14,7 @@ export default function IOPerformancePage() {
   const [loading, setLoading] = useState(true);
   const [instances, setInstances] = useState<any[]>([]);
   const [selectedInstance, setSelectedInstance] = useState<number | undefined>();
-  const [hours, setHours] = useState(24);
+  const tw = useApiTimeWindow();
 
   useEffect(() => {
     api.instances().then(i => setInstances(Array.isArray(i) ? i : [])).catch(() => {});
@@ -22,7 +22,7 @@ export default function IOPerformancePage() {
 
   useEffect(() => {
     setLoading(true);
-    api.performanceIO(selectedInstance, hours, 25_000)
+    api.performanceIO(selectedInstance, tw, 25_000)
       .then(r => {
         setFileStats(Array.isArray(r.fileStats) ? r.fileStats : []);
         setDrivePerf(Array.isArray(r.drivePerf) ? r.drivePerf : []);
@@ -31,7 +31,7 @@ export default function IOPerformancePage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [selectedInstance, hours]);
+  }, [selectedInstance, tw.fromUtc, tw.toUtc]);
 
   if (loading) return <LoadingSpinner />;
 
@@ -91,7 +91,6 @@ export default function IOPerformancePage() {
               <option key={inst.InstanceID} value={inst.InstanceID}>{inst.InstanceDisplayName}</option>
             ))}
           </select>
-          <TimeRangeSelector value={hours} onChange={setHours} />
         </div>
       </div>
 

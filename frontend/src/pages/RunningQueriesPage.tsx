@@ -8,6 +8,7 @@ import { motion } from 'framer-motion';
 import { Activity, ChevronDown, ChevronRight } from 'lucide-react';
 import { clsx } from 'clsx';
 import { usePresentationOptional } from '../context/PresentationContext';
+import { useApiTimeWindow, useParsedTimeRange } from '../lib/timeRange';
 
 export default function RunningQueriesPage() {
   const { dataGridTableClass, dataGridShellClass, isDesktopData } = usePresentationOptional();
@@ -29,6 +30,8 @@ export default function RunningQueriesPage() {
   const [snapErr, setSnapErr] = useState('');
   const [snapLoading, setSnapLoading] = useState(false);
   const [snapTop, setSnapTop] = useState(2000);
+  const tw = useApiTimeWindow();
+  const timeLabel = useParsedTimeRange().label;
 
   useEffect(() => {
     api.instances(includeAllInstances).then(i => setInstances(Array.isArray(i) ? i : [])).catch(() => {});
@@ -77,7 +80,7 @@ export default function RunningQueriesPage() {
       return;
     }
     api
-      .performanceRunningQueriesSummary(selectedInstance, 24, 5000)
+      .performanceRunningQueriesSummary(selectedInstance, tw, 5000)
       .then(r => {
         setSummaryRows(Array.isArray(r.data) ? r.data : []);
         setSummaryNote(r.note || '');
@@ -86,7 +89,7 @@ export default function RunningQueriesPage() {
         setSummaryRows([]);
         setSummaryNote('Summary unavailable.');
       });
-  }, [selectedInstance, viewTab]);
+  }, [selectedInstance, viewTab, tw.fromUtc, tw.toUtc]);
 
   const toggleRow = (i: number) => {
     setExpandedRows(prev => {
@@ -205,7 +208,7 @@ export default function RunningQueriesPage() {
       {selectedInstance != null && (
         <div className="space-y-2">
           <h2 className="text-sm font-semibold text-gray-400">
-            Instance summary (same stored procedure as DBA Dash Windows: <span className="font-mono text-gray-500">RunningQueriesSummary_Get</span>, last 24h)
+            Instance summary (same stored procedure as DBA Dash Windows: <span className="font-mono text-gray-500">RunningQueriesSummary_Get</span>, {timeLabel})
           </h2>
           {summaryNote && (
             <div className="text-xs text-amber-400/80 bg-amber-400/5 border border-amber-400/20 rounded-lg px-3 py-2">{summaryNote}</div>

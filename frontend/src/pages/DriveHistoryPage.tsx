@@ -6,6 +6,7 @@ import { usePresentationOptional } from '../context/PresentationContext';
 import { motion } from 'framer-motion';
 import { LineChart } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useApiTimeWindow } from '../lib/timeRange';
 
 function cols(rows: Record<string, unknown>[]) {
   if (!rows.length) return [];
@@ -18,7 +19,7 @@ export default function DriveHistoryPage() {
   const [id, setId] = useState<number | ''>('');
   const [drives, setDrives] = useState<any[]>([]);
   const [driveId, setDriveId] = useState<number | ''>('');
-  const [hours, setHours] = useState(168);
+  const tw = useApiTimeWindow();
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [note, setNote] = useState('');
   const [err, setErr] = useState('');
@@ -56,7 +57,7 @@ export default function DriveHistoryPage() {
     setLoading(true);
     setErr('');
     api
-      .instanceDriveSnapshots(id, Number(driveId), hours)
+      .instanceDriveSnapshots(id, Number(driveId), tw)
       .then((r) => {
         setRows((r.data || []) as Record<string, unknown>[]);
         setNote(r.note || '');
@@ -64,7 +65,7 @@ export default function DriveHistoryPage() {
       })
       .catch((e) => setErr(e?.message || 'Failed'))
       .finally(() => setLoading(false));
-  }, [id, driveId, hours]);
+  }, [id, driveId, tw.fromUtc, tw.toUtc]);
 
   const columns = useMemo(() => cols(rows), [rows]);
 
@@ -113,17 +114,6 @@ export default function DriveHistoryPage() {
               );
             })}
           </select>
-        </div>
-        <div>
-          <label className="text-xs text-gray-500 uppercase">Range (hours)</label>
-          <input
-            type="number"
-            min={1}
-            max={8760}
-            value={hours}
-            onChange={(e) => setHours(Math.min(8760, Math.max(1, Number(e.target.value) || 168)))}
-            className="mt-1 w-28 rounded-md bg-white/5 border border-white/10 px-3 py-2 text-sm text-white"
-          />
         </div>
       </div>
 

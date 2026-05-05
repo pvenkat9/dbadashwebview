@@ -6,6 +6,7 @@ import PaginationBar from '../components/PaginationBar';
 import { usePresentationOptional } from '../context/PresentationContext';
 import { motion } from 'framer-motion';
 import { Zap } from 'lucide-react';
+import { useApiTimeWindow } from '../lib/timeRange';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 type SortKey = 'object_name' | 'SchemaName' | 'execution_count' | 'total_worker_time' | 'avg_cpu' | 'total_elapsed_time' | 'avg_duration' | 'total_logical_reads' | 'total_logical_writes';
@@ -19,7 +20,7 @@ export default function ExecStatsPage() {
   const [selectedInstance, setSelectedInstance] = useState<number | undefined>();
   const [sortKey, setSortKey] = useState<SortKey>('total_worker_time');
   const [sortAsc, setSortAsc] = useState(false);
-  const [hours, setHours] = useState(24);
+  const tw = useApiTimeWindow();
   const [limit, setLimit] = useState(5000);
   const [offset, setOffset] = useState(0);
 
@@ -29,11 +30,11 @@ export default function ExecStatsPage() {
 
   useEffect(() => {
     setLoading(true);
-    api.performanceExecStats(selectedInstance, hours, limit, offset)
+    api.performanceExecStats(selectedInstance, tw, limit, offset)
       .then(r => { setData(Array.isArray(r.data) ? r.data : []); setNote(r.note || ''); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [selectedInstance, hours, limit, offset]);
+  }, [selectedInstance, tw.fromUtc, tw.toUtc, limit, offset]);
 
   const enriched = useMemo(() => data.map(d => ({
     ...d,
@@ -89,9 +90,6 @@ export default function ExecStatsPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <select value={hours} onChange={e => setHours(Number(e.target.value))} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-gray-300">
-            <option value={1}>1h</option><option value={6}>6h</option><option value={12}>12h</option><option value={24}>24h</option><option value={72}>3d</option><option value={168}>7d</option><option value={336}>14d</option>
-          </select>
           <select value={selectedInstance ?? ''} onChange={e => setSelectedInstance(e.target.value ? Number(e.target.value) : undefined)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-gray-300">
             <option value="">All Instances</option>
             {instances.map((inst: any) => <option key={inst.InstanceID} value={inst.InstanceID}>{inst.InstanceDisplayName || inst.InstanceID}</option>)}

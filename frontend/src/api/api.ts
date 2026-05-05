@@ -45,6 +45,15 @@ function withQuery(base: string, params: Record<string, string | number | boolea
   return s ? `${base}?${s}` : base;
 }
 
+/** Rolling hours or absolute UTC window (matches backend fromUtc/toUtc). */
+export type InstanceTimeQuery = { fromUtc: string; toUtc: string } | { hours: number };
+
+function asTimeParams(q?: InstanceTimeQuery): Record<string, string | number> {
+  const t = q ?? { hours: 24 };
+  if ('fromUtc' in t) return { fromUtc: t.fromUtc, toUtc: t.toUtc };
+  return { hours: t.hours };
+}
+
 export interface DashboardStats {
   totalInstances: number;
   healthy: number;
@@ -72,9 +81,10 @@ export const api = {
   instances: (allInstances?: boolean) =>
     request<any[]>(withQuery('/api/instances', { all: allInstances ? true : undefined })),
   instance: (id: number) => request<{ instance: any; summary: any }>(`/api/instances/${id}`),
-  instanceCpu: (id: number, hours = 24) => request<any[]>(`/api/instances/${id}/cpu?hours=${hours}`),
-  instanceWaits: (id: number, hours = 24, top = 200) =>
-    request<any[]>(withQuery(`/api/instances/${id}/waits`, { hours, top })),
+  instanceCpu: (id: number, q?: InstanceTimeQuery) =>
+    request<any[]>(withQuery(`/api/instances/${id}/cpu`, asTimeParams(q))),
+  instanceWaits: (id: number, q?: InstanceTimeQuery, top = 200) =>
+    request<any[]>(withQuery(`/api/instances/${id}/waits`, { top, ...asTimeParams(q) })),
   instanceDrives: (id: number) => request<any[]>(`/api/instances/${id}/drives`),
   instanceLogShippingSummary: (id: number) =>
     request<{ data: any[]; note: string; error?: string }>(`/api/instances/${id}/log-shipping-summary`),
@@ -94,12 +104,12 @@ export const api = {
     request<{ data: any[]; note: string; error?: string }>(`/api/instances/${id}/corruption`),
   instanceLastCheckdb: (id: number) =>
     request<{ data: any[]; note: string; error?: string }>(`/api/instances/${id}/last-checkdb`),
-  instanceDriveSnapshots: (id: number, driveId: number, hours?: number) =>
+  instanceDriveSnapshots: (id: number, driveId: number, q?: InstanceTimeQuery) =>
     request<{ data: any[]; note: string; error?: string; fromDate?: string; toDate?: string }>(
-      withQuery(`/api/instances/${id}/drives/${driveId}/snapshots`, { hours }),
+      withQuery(`/api/instances/${id}/drives/${driveId}/snapshots`, asTimeParams(q)),
     ),
-  instanceCpuSp: (id: number, hours?: number) =>
-    request<{ data: any[]; note: string; error?: string }>(withQuery(`/api/instances/${id}/cpu-sp`, { hours })),
+  instanceCpuSp: (id: number, q?: InstanceTimeQuery) =>
+    request<{ data: any[]; note: string; error?: string }>(withQuery(`/api/instances/${id}/cpu-sp`, asTimeParams(q))),
   estateLogShipping: () =>
     request<{ data: any[]; note: string; error?: string }>('/api/estate/log-shipping'),
   estateDatabaseMirroring: () =>
@@ -158,9 +168,9 @@ export const api = {
       withQuery('/api/performance/running-queries', { instanceId, limit, offset }),
     ),
   /** Same data as Windows DBA Dash Running Queries summary: dbo.RunningQueriesSummary_Get */
-  performanceRunningQueriesSummary: (instanceId: number, hours = 24, limit?: number) =>
+  performanceRunningQueriesSummary: (instanceId: number, q?: InstanceTimeQuery, limit?: number) =>
     request<{ data: any[]; note: string }>(
-      withQuery('/api/performance/running-queries-summary', { instanceId, hours, limit }),
+      withQuery('/api/performance/running-queries-summary', { instanceId, limit, ...asTimeParams(q) }),
     ),
   /** dbo.RunningQueries_Get — full snapshot grid + OUTPUT metadata (hasCursors, snapshot dates) */
   performanceRunningQueriesSnapshot: (instanceId: number, top?: number) =>
@@ -175,28 +185,34 @@ export const api = {
     request<{ data: any[]; note: string }>(
       withQuery('/api/performance/blocking', { instanceId, limit, offset }),
     ),
-  performanceSlowQueries: (instanceId?: number, hours = 24, limit?: number, offset?: number) =>
+  performanceSlowQueries: (instanceId?: number, q?: InstanceTimeQuery, limit?: number, offset?: number) =>
     request<{ data: any[]; note: string }>(
-      withQuery('/api/performance/slow-queries', { instanceId, hours, limit, offset }),
+      withQuery('/api/performance/slow-queries', { instanceId, limit, offset, ...asTimeParams(q) }),
     ),
-  performanceMemory: (instanceId?: number, hours = 24, limit?: number) =>
+  performanceMemory: (instanceId?: number, q?: InstanceTimeQuery, limit?: number) =>
     request<{ clerks: any[]; counters: any[]; clerkNote: string; counterNote: string }>(
-      withQuery('/api/performance/memory', { instanceId, hours, limit }),
+      withQuery('/api/performance/memory', { instanceId, limit, ...asTimeParams(q) }),
     ),
-  performanceIO: (instanceId?: number, hours = 24, limit?: number) =>
+  performanceIO: (instanceId?: number, q?: InstanceTimeQuery, limit?: number) =>
     request<{ fileStats: any[]; drivePerf: any[]; fileNote: string; driveNote: string }>(
-      withQuery('/api/performance/io', { instanceId, hours, limit }),
+      withQuery('/api/performance/io', { instanceId, limit, ...asTimeParams(q) }),
     ),
-  performanceExecStats: (instanceId?: number, hours = 24, limit?: number, offset?: number) =>
+  performanceExecStats: (instanceId?: number, q?: InstanceTimeQuery, limit?: number, offset?: number) =>
     request<{ data: any[]; note: string }>(
-      withQuery('/api/performance/exec-stats', { instanceId, hours, limit, offset }),
+      withQuery('/api/performance/exec-stats', { instanceId, limit, offset, ...asTimeParams(q) }),
     ),
-  performanceWaitsTimeline: (instanceId: number, hours = 24) =>
-    request<{ data: any[]; note: string }>(`/api/performance/waits-timeline?instanceId=${instanceId}&hours=${hours}`),
-  performanceCounters: (instanceId: number, hours = 24) =>
-    request<{ data: any[]; note: string }>(`/api/performance/counters?instanceId=${instanceId}&hours=${hours}`),
-  monitoringJobTimeline: (instanceId: number, hours = 24) =>
-    request<{ data: any[]; note: string }>(`/api/monitoring/job-timeline?instanceId=${instanceId}&hours=${hours}`),
+  performanceWaitsTimeline: (instanceId: number, q?: InstanceTimeQuery) =>
+    request<{ data: any[]; note: string }>(
+      withQuery('/api/performance/waits-timeline', { instanceId, ...asTimeParams(q) }),
+    ),
+  performanceCounters: (instanceId: number, q?: InstanceTimeQuery) =>
+    request<{ data: any[]; note: string }>(
+      withQuery('/api/performance/counters', { instanceId, ...asTimeParams(q) }),
+    ),
+  monitoringJobTimeline: (instanceId: number, q?: InstanceTimeQuery) =>
+    request<{ data: any[]; note: string }>(
+      withQuery('/api/monitoring/job-timeline', { instanceId, ...asTimeParams(q) }),
+    ),
   monitoringConfiguration: (instanceId: number) =>
     request<{ data: any[]; note: string }>(`/api/monitoring/configuration?instanceId=${instanceId}`),
   monitoringConfigurationChanges: (instanceId: number, days = 30) =>
@@ -222,7 +238,8 @@ export const api = {
   tree: () => request<any[]>('/api/tree'),
   reportsLicenses: () => request<any[]>('/api/reports/licenses'),
   reportsUnderutilized: () => request<any[]>('/api/reports/underutilized'),
-  reportsFleetStats: (hours = 24) => request<any[]>(`/api/reports/fleet-stats?hours=${hours}`),
+  reportsFleetStats: (q?: InstanceTimeQuery) =>
+    request<any[]>(withQuery('/api/reports/fleet-stats', asTimeParams(q))),
   reportsBackupAmpel: () => request<{ instances: any[]; databases: any[] }>('/api/reports/backup-ampel'),
   dashboardMonitor: () => request<{ instances: any[]; alertCounts: Record<string, number>; recentErrors: any[] }>('/api/dashboard/monitor'),
   getThresholds: () =>

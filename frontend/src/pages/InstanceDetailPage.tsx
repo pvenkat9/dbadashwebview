@@ -12,7 +12,7 @@ import {
   Server, Cpu, HardDrive, Database, Activity, Clock, Shield,
   ChevronRight, Zap, BarChart3, Timer, AlertTriangle
 } from 'lucide-react';
-import TimeRangeSelector, { hoursLabel } from '../components/TimeRangeSelector';
+import { useApiTimeWindow, rangeSpanLabel } from '../lib/timeRange';
 import { SUMMARY_STATUS_KEYS } from '../constants/summaryStatusKeys';
 import { clsx } from 'clsx';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -68,15 +68,15 @@ export default function InstanceDetailPage() {
   const [jobs, setJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [jobFilter, setJobFilter] = useState<'all' | 'failed' | 'success'>('all');
-  const [hours, setHours] = useState(24);
+  const tw = useApiTimeWindow();
 
   useEffect(() => {
     (async () => {
       try {
         const [d, c, w, dr, db, b, j] = await Promise.all([
           api.instance(instanceId).catch(() => null),
-          api.instanceCpu(instanceId, hours).catch(() => []),
-          api.instanceWaits(instanceId, hours, 2000).catch(() => []),
+          api.instanceCpu(instanceId, tw).catch(() => []),
+          api.instanceWaits(instanceId, tw, 2000).catch(() => []),
           api.instanceDrives(instanceId).catch(() => []),
           api.instanceDatabases(instanceId).catch(() => []),
           api.instanceBackups(instanceId).catch(() => []),
@@ -93,7 +93,7 @@ export default function InstanceDetailPage() {
         setLoading(false);
       }
     })();
-  }, [instanceId, hours]);
+  }, [instanceId, tw.fromUtc, tw.toUtc]);
 
   // ── Derived data ───────────────────────────────────────────────────────
 
@@ -286,8 +286,8 @@ export default function InstanceDetailPage() {
                 <div className="grid grid-cols-3 gap-4">
                   {[
                     { label: 'Current CPU', value: `${cpuStats.current}%`, color: cpuStats.current > 50 ? 'text-red-400' : cpuStats.current > 25 ? 'text-yellow-400' : 'text-emerald-400' },
-                    { label: 'Avg (24h)', value: `${cpuStats.avg}%`, color: cpuStats.avg > 50 ? 'text-red-400' : cpuStats.avg > 25 ? 'text-yellow-400' : 'text-emerald-400' },
-                    { label: 'Peak (24h)', value: `${cpuStats.max}%`, color: cpuStats.max > 80 ? 'text-red-400' : cpuStats.max > 50 ? 'text-yellow-400' : 'text-emerald-400' },
+                    { label: `Avg (${rangeSpanLabel(new Date(tw.fromUtc), new Date(tw.toUtc))})`, value: `${cpuStats.avg}%`, color: cpuStats.avg > 50 ? 'text-red-400' : cpuStats.avg > 25 ? 'text-yellow-400' : 'text-emerald-400' },
+                    { label: `Peak (${rangeSpanLabel(new Date(tw.fromUtc), new Date(tw.toUtc))})`, value: `${cpuStats.max}%`, color: cpuStats.max > 80 ? 'text-red-400' : cpuStats.max > 50 ? 'text-yellow-400' : 'text-emerald-400' },
                   ].map((k, i) => (
                     <motion.div key={k.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
                       className="glass rounded-xl p-5">
@@ -302,9 +302,8 @@ export default function InstanceDetailPage() {
               <div className="glass rounded-2xl p-6">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                    <Cpu className="w-4 h-4 text-blue-400" /> CPU Usage ({hoursLabel(hours)})
+                    <Cpu className="w-4 h-4 text-blue-400" /> CPU Usage ({rangeSpanLabel(new Date(tw.fromUtc), new Date(tw.toUtc))})
                   </h3>
-                  <TimeRangeSelector value={hours} onChange={setHours} />
                 </div>
                 {cpu.length > 0 ? (
                   <ResponsiveContainer width="100%" height={320}>

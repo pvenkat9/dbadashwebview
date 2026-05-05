@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import { Clock, ChevronDown, ChevronRight } from 'lucide-react';
 import { clsx } from 'clsx';
 import { usePresentationOptional } from '../context/PresentationContext';
+import { useApiTimeWindow } from '../lib/timeRange';
 
 export default function SlowQueriesPage() {
   const { dataGridTableClass, dataGridShellClass, isDesktopData } = usePresentationOptional();
@@ -15,7 +16,7 @@ export default function SlowQueriesPage() {
   const [instances, setInstances] = useState<any[]>([]);
   const [includeAllInstances, setIncludeAllInstances] = useState(false);
   const [selectedInstance, setSelectedInstance] = useState<number | undefined>();
-  const [hours, setHours] = useState(24);
+  const tw = useApiTimeWindow();
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
   const [dbFilter, setDbFilter] = useState('');
   const [appFilter, setAppFilter] = useState('');
@@ -28,11 +29,11 @@ export default function SlowQueriesPage() {
 
   useEffect(() => {
     setLoading(true);
-    api.performanceSlowQueries(selectedInstance, hours, limit, offset)
+    api.performanceSlowQueries(selectedInstance, tw, limit, offset)
       .then(r => { setData(r.data || []); setNote(r.note || ''); })
       .catch(() => setData([]))
       .finally(() => setLoading(false));
-  }, [selectedInstance, hours, limit, offset]);
+  }, [selectedInstance, tw.fromUtc, tw.toUtc, limit, offset]);
 
   const toggleRow = (i: number) => {
     setExpandedRows(prev => {
@@ -80,18 +81,6 @@ export default function SlowQueriesPage() {
             />
             All active instances in list
           </label>
-          <select value={hours} onChange={e => { setHours(Number(e.target.value)); setOffset(0); }}
-            className={clsx(
-              'rounded-lg px-3 py-2 text-sm focus:outline-none',
-              isDesktopData ? 'bg-white border border-[#7a7a7a] text-black' : 'bg-slate-800 border border-slate-600 text-gray-300',
-            )}>
-            <option value={1}>Last 1h</option>
-            <option value={6}>Last 6h</option>
-            <option value={24}>Last 24h</option>
-            <option value={72}>Last 3d</option>
-            <option value={168}>Last 7d</option>
-            <option value={336}>Last 14d</option>
-          </select>
           <select value={selectedInstance ?? ''} onChange={e => { setSelectedInstance(e.target.value ? Number(e.target.value) : undefined); setOffset(0); }}
             className={clsx(
               'rounded-lg px-3 py-2 text-sm focus:outline-none',

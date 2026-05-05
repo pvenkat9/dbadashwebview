@@ -7,6 +7,7 @@ import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, Brush, ReferenceLine
 } from 'recharts';
+import { useApiTimeWindow } from '../lib/timeRange';
 
 export default function AnalysisPage() {
   const { lastRefresh } = useRefresh();
@@ -18,6 +19,7 @@ export default function AnalysisPage() {
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState({ cpu: true, ioWaits: false, memory: false });
   const [showBaseline, setShowBaseline] = useState(false);
+  const tw = useApiTimeWindow();
 
   useEffect(() => {
     api.instances().then(d => {
@@ -31,15 +33,15 @@ export default function AnalysisPage() {
     if (!selectedInstance) return;
     setLoading(true);
     Promise.all([
-      api.instanceCpu(selectedInstance).catch(() => []),
-      api.instanceWaits(selectedInstance, 24, 2000).catch(() => []),
+      api.instanceCpu(selectedInstance, tw).catch(() => []),
+      api.instanceWaits(selectedInstance, tw, 2000).catch(() => []),
       api.alertsRecent(500, 0).catch(() => []),
     ]).then(([cpu, waits, al]) => {
       setCpuData(Array.isArray(cpu) ? cpu : []);
       setWaitsData(Array.isArray(waits) ? waits : []);
       setAlerts(Array.isArray(al) ? al : []);
     }).finally(() => setLoading(false));
-  }, [selectedInstance, lastRefresh]);
+  }, [selectedInstance, lastRefresh, tw.fromUtc, tw.toUtc]);
 
   const chartData = useMemo(() => {
     return cpuData.map((c, i) => ({
