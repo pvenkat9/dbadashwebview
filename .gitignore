@@ -2,6 +2,7 @@
 backend/bin/
 backend/obj/
 backend/Properties/launchSettings.json
+project.nuget.cache
 *.dll
 *.pdb
 *.exe
