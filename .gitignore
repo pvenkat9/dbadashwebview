@@ -19,3 +19,7 @@ Thumbs.db
 
 # Logs
 *.log
+.test-logs/
+
+# Reference apps (not part of repo)
+.reference/

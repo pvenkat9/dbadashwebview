@@ -1,0 +1,14 @@
+{
+  "_comment": "Merge into C:\\inetpub\\dbadash\\appsettings.json under AgenticChat. Keep your TrimbleClientId/Secret from server config.",
+  "Enabled": true,
+  "Environment": "Stage",
+  "AgentId": "8703e7ea-23b4-464b-a40c-d1901ee0c0ae",
+  "TrimbleChatScope": "agents",
+  "TrimbleChatScopeCandidates": ["agents"],
+  "TrimbleChatAudience": "",
+  "SkipAgentsApiProbe": true,
+  "RegisterApplicationWithAgent": true,
+  "AgentStudioParityMode": true,
+  "RegisterLocalRuntimeTools": false,
+  "OnBeforeRunTimeoutMs": 30000
+}

@@ -2,7 +2,7 @@ import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-
 import { useState, useEffect, useCallback, createContext, useContext, Suspense, useRef } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { isAuthenticated, clearToken, api } from './api/api';
-import { Sun, Moon, RefreshCw, LayoutGrid, Monitor, Keyboard, Link2 } from 'lucide-react';
+import { Sun, Moon, RefreshCw, LayoutGrid, Monitor, Keyboard, Link2, MessageSquare } from 'lucide-react';
 import { clsx } from 'clsx';
 import LoginPage from './pages/LoginPage';
 import {
@@ -71,6 +71,8 @@ import PageTransition from './components/PageTransition';
 import RouteSkeleton from './components/RouteSkeleton';
 import AmbientBackground from './components/AmbientBackground';
 import ScrollToTop from './components/ScrollToTop';
+import AgenticChat from './components/AgenticChat';
+import AgenticChatWidget from './components/AgenticChatWidget';
 import KeyboardShortcutsModal, { registerShortcutsPaletteListener } from './components/KeyboardShortcutsModal';
 import { useDocumentTitle } from './hooks/useDocumentTitle';
 import { openSearchPalette } from './lib/searchEvents';
@@ -269,6 +271,17 @@ function Layout({ children }: { children: React.ReactNode }) {
             >
               <RefreshCw className="w-4 h-4" />
             </motion.button>
+            <motion.button
+              type="button"
+              whileHover={isWebShell && !reduceMotion ? { scale: 1.08 } : undefined}
+              whileTap={isWebShell && !reduceMotion ? { scale: 0.92 } : undefined}
+              onClick={() => window.dispatchEvent(new CustomEvent('agentic-chat:open'))}
+              title="AI Chat"
+              aria-label="Open AI Chat"
+              className="p-2 rounded-lg text-blue-400 hover:text-blue-300 hover:bg-blue-500/15 transition-colors duration-200"
+            >
+              <MessageSquare className="w-4 h-4" />
+            </motion.button>
           </div>
         </motion.header>
 
@@ -279,6 +292,8 @@ function Layout({ children }: { children: React.ReactNode }) {
           </PageTransition>
         </main>
       </div>
+
+      <AgenticChatWidget />
     </div>
   );
 }
@@ -359,6 +374,7 @@ export default function App() {
                 <Route path="/windows-parity" element={<WindowsParityPage />} />
                 <Route path="/tools/community" element={<CommunityToolsPage />} />
                 <Route path="/tools/custom-reports" element={<CustomReportsPage />} />
+                <Route path="/chat" element={<AgenticChat />} />
               </Routes>
             </Layout>
           </AuthGuard>

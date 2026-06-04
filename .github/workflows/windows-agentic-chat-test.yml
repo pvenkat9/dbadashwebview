@@ -1,0 +1,121 @@
+# Windows environment: build, run Kestrel, test Agentic Chat (plugin + Trimble probe).
+# Requires repo secrets: TRIMBLE_NUGET_USER, TRIMBLE_NUGET_PASSWORD (Artifactory API key).
+name: Windows Agentic Chat Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'scripts/**'
+      - 'nuget.config'
+      - '.github/workflows/windows-agentic-chat-test.yml'
+
+jobs:
+  windows-test:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Configure Trimble NuGet (if secrets present)
+        shell: pwsh
+        env:
+          TRIMBLE_USER: ${{ secrets.TRIMBLE_NUGET_USER }}
+          TRIMBLE_PASS: ${{ secrets.TRIMBLE_NUGET_PASSWORD }}
+        run: |
+          if (-not $env:TRIMBLE_USER -or -not $env:TRIMBLE_PASS) {
+            Write-Warning "TRIMBLE_NUGET_USER / TRIMBLE_NUGET_PASSWORD not set — restore may fail"
+            exit 0
+          }
+          dotnet nuget remove source trimble-agentic-external-nuget-local 2>$null
+          dotnet nuget add source "https://artifactory.trimble.tools/artifactory/api/nuget/v3/trimble-agentic-external-nuget-local" `
+            --name trimble-agentic-external-nuget-local `
+            --username $env:TRIMBLE_USER `
+            --password $env:TRIMBLE_PASS `
+            --store-password-in-clear-text
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: Publish backend (Windows)
+        working-directory: backend
+        run: dotnet publish -c Release -o ../publish --configfile ../nuget.config
+
+      - name: Assemble wwwroot
+        shell: pwsh
+        run: |
+          if (Test-Path publish/wwwroot) { Remove-Item -Recurse publish/wwwroot }
+          New-Item -ItemType Directory -Path publish/wwwroot | Out-Null
+          Copy-Item -Recurse frontend/dist/* publish/wwwroot/
+          if (-not (Test-Path publish/wwwroot/agentic-chat-shell.html)) { throw "agentic-chat-shell.html missing" }
+          foreach ($dll in @('DBADashWebView.dll','DBADashWebView.AgenticChat.dll','Trimble.AgenticChat.Core.dll')) {
+            if (-not (Test-Path "publish/$dll")) { throw "Missing publish/$dll" }
+          }
+          Write-Host "OK: Windows publish has Agentic Chat DLLs"
+
+      - name: Prepare test appsettings
+        shell: pwsh
+        run: |
+          Copy-Item backend/appsettings.Development.json publish/appsettings.Development.json -Force
+          $json = Get-Content publish/appsettings.json -Raw | ConvertFrom-Json
+          $json.ConnectionStrings.DBADashDB = "Server=(localdb)\mssqllocaldb;Database=master;TrustServerCertificate=true;Integrated Security=true;"
+          $json | ConvertTo-Json -Depth 12 | Set-Content publish/appsettings.json
+
+      - name: Start app on Kestrel
+        shell: pwsh
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          ASPNETCORE_URLS: http://127.0.0.1:5098
+          TRIMBLE_CLIENT_ID: ${{ secrets.TRIMBLE_CLIENT_ID }}
+          TRIMBLE_CLIENT_SECRET: ${{ secrets.TRIMBLE_CLIENT_SECRET }}
+        run: |
+          $job = Start-Job -ScriptBlock {
+            Set-Location $using:PWD
+            Set-Location publish
+            dotnet .\DBADashWebView.dll
+          }
+          Start-Sleep -Seconds 8
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $h = Invoke-RestMethod http://127.0.0.1:5098/api/health -TimeoutSec 3
+              if ($h.status -eq 'healthy') { break }
+            } catch { Start-Sleep -Seconds 2 }
+          }
+          $chat = Invoke-RestMethod http://127.0.0.1:5098/api/chat/health -TimeoutSec 10
+          if (-not $chat.enabled) {
+            Receive-Job $job
+            throw "Chat plugin disabled on Windows: $($chat | ConvertTo-Json)"
+          }
+          Write-Host "Chat plugin enabled on Windows runner"
+          "job_id=$($job.Id)" | Out-File -FilePath $env:RUNNER_TEMP/dba-job.txt
+
+      - name: Run Agentic Chat tests
+        shell: pwsh
+        run: |
+          .\scripts\test-windows-agentic-chat.ps1 -BaseUrl http://127.0.0.1:5098
+
+      - name: Stop app
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path $env:RUNNER_TEMP/dba-job.txt) {
+            $id = (Get-Content $env:RUNNER_TEMP/dba-job.txt) -replace 'job_id=',''
+            Stop-Job -Id $id -ErrorAction SilentlyContinue
+            Remove-Job -Id $id -Force -ErrorAction SilentlyContinue
+          }
+          Get-NetTCPConnection -LocalPort 5098 -ErrorAction SilentlyContinue |
+            ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }

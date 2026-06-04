@@ -8,8 +8,18 @@ export function setToken(token: string) {
   localStorage.setItem('token', token);
 }
 
+/** Trimble Identity access token for Agentic Chat UI (separate from DBA JWT). */
+export function setTrimbleToken(token: string) {
+  localStorage.setItem('trimbleToken', token);
+}
+
+export function getTrimbleToken(): string | null {
+  return localStorage.getItem('trimbleToken');
+}
+
 export function clearToken() {
   localStorage.removeItem('token');
+  localStorage.removeItem('trimbleToken');
 }
 
 export function isAuthenticated(): boolean {
@@ -333,4 +343,12 @@ export const api = {
     }
     return data as { procedure: string; rowsAffected: number };
   },
+
+  chatDiagnostics: (): Promise<{
+    ok: boolean;
+    issues: string[];
+    agentsApiOk?: boolean;
+    trimbleChatTokenAcquired?: boolean;
+    trimbleChatScope?: string;
+  }> => request('/api/chat/diagnostics'),
 };

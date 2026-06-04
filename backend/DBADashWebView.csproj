@@ -7,11 +7,48 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="DBADashWebView.AgenticChat\**" />
+    <Content Remove="DBADashWebView.AgenticChat\**" />
+    <None Remove="DBADashWebView.AgenticChat\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.12" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.24" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.4" />
     <PackageReference Include="System.DirectoryServices.Protocols" Version="8.0.1" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="config/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Chat plugin: copied to publish output; main DLL has no Trimble reference -->
+  <ItemGroup>
+    <ProjectReference Include="DBADashWebView.AgenticChat\DBADashWebView.AgenticChat.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
+  </ItemGroup>
+
+  <Target Name="CopyAgenticChatToOutput" AfterTargets="Build">
+    <MSBuild Projects="DBADashWebView.AgenticChat\DBADashWebView.AgenticChat.csproj"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)" />
+    <ItemGroup>
+      <_ChatOut Include="DBADashWebView.AgenticChat\bin\$(Configuration)\$(TargetFramework)\*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ChatOut)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyAgenticChatToPublish" AfterTargets="Publish">
+    <MSBuild Projects="DBADashWebView.AgenticChat\DBADashWebView.AgenticChat.csproj"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework)" />
+    <ItemGroup>
+      <_ChatPub Include="DBADashWebView.AgenticChat\bin\$(Configuration)\$(TargetFramework)\*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ChatPub)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>

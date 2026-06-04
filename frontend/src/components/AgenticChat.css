@@ -1,0 +1,259 @@
+.agentic-chat-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: #ffffff;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.agentic-chat-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background-color: #ffffff;
+}
+
+/* Loading State */
+.agentic-chat-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: #f9f9f9;
+  gap: 16px;
+}
+
+.spinner {
+  border: 4px solid #f0f0f0;
+  border-top: 4px solid #0066cc;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.agentic-chat-loading p {
+  color: #666666;
+  font-size: 14px;
+  margin: 0;
+}
+
+/* Error State */
+.agentic-chat-error {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: #fff3cd;
+  padding: 32px 20px;
+  text-align: center;
+  gap: 16px;
+}
+
+.error-icon {
+  font-size: 48px;
+  line-height: 1;
+}
+
+.error-message {
+  color: #856404;
+  font-size: 14px;
+  max-width: 400px;
+}
+
+.error-message strong {
+  display: block;
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.error-message p {
+  margin: 8px 0 0 0;
+  line-height: 1.5;
+}
+
+.retry-button {
+  padding: 10px 20px;
+  background-color: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+
+.retry-button:hover {
+  background-color: #0052a3;
+}
+
+.retry-button:active {
+  background-color: #003d7a;
+}
+
+/* Connection Status Indicator */
+.connection-status {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: white;
+  font-size: 12px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.agentic-chat-container:hover .connection-status {
+  opacity: 1;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #999999;
+  animation: pulse 1s infinite;
+}
+
+.connection-status.connected .status-dot {
+  background-color: #28a745;
+  animation: pulse-connected 1s infinite;
+}
+
+.connection-status.disconnected .status-dot {
+  background-color: #dc3545;
+  animation: none;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes pulse-connected {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(40, 167, 69, 0);
+  }
+}
+
+/* Temporary Trimble Assist link fallback */
+.agentic-chat-assist-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f8fafc;
+}
+
+.agentic-chat-assist-fallback-inner {
+  max-width: 28rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+.agentic-chat-assist-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.agentic-chat-assist-text {
+  margin: 0 0 1.25rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: #475569;
+}
+
+.agentic-chat-assist-link {
+  display: inline-block;
+  padding: 0.65rem 1.25rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #fff;
+  text-decoration: none;
+  background: #0066cc;
+  border-radius: 6px;
+  transition: background-color 0.2s;
+}
+
+.agentic-chat-assist-link:hover {
+  background: #0052a3;
+  text-decoration: underline;
+}
+
+.agentic-chat-assist-url {
+  margin: 1rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #64748b;
+  word-break: break-all;
+}
+
+.agentic-chat-assist-link--secondary {
+  margin-top: 0.5rem;
+  background: transparent;
+  color: #0066cc;
+  border: 1px solid #0066cc;
+  font-weight: 500;
+}
+
+.agentic-chat-assist-link--secondary:hover {
+  background: #f0f7ff;
+}
+
+.agentic-chat-embedded .agentic-chat-iframe {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .agentic-chat-container {
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .error-message {
+    max-width: 100%;
+  }
+
+  .agentic-chat-loading,
+  .agentic-chat-error {
+    padding: 20px;
+  }
+}

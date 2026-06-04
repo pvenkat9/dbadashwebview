@@ -1,0 +1,13 @@
+{
+  "Enabled": true,
+  "Server": "IADA-EB-QA-PDC.ebdevqa.local",
+  "Port": 389,
+  "UseSsl": false,
+  "Domain": "ebdevqa.local",
+  "BaseDn": "OU=User Accounts,DC=ebdevqa,DC=local",
+  "RequiredGroup": "dpa-readonly",
+  "AdminGroup": "dpa-admin",
+  "AllowLocalFallback": true,
+  "BindUser": "", // TODO: Get from 1Password (svcdevqaldap)
+  "BindPassword": "" // TODO: Get from 1Password (svcdevqaldap)
+}

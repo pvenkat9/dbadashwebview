@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DBA Dashboard - Agentic Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 100%;
+            height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f5f5f5;
+            overflow: hidden;
+        }
+
+        .chat-shell {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-header {
+            background-color: #ffffff;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 16px 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .chat-header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            color: #333333;
+        }
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .chat-iframe-wrapper {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .chat-iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background-color: #ffffff;
+        }
+
+        .chat-iframe-wrapper {
+            background-color: #ffffff;
+        }
+
+        .loading-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 10;
+        }
+
+        .spinner {
+            border: 4px solid #f0f0f0;
+            border-top: 4px solid #0066cc;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: #666666;
+            font-size: 14px;
+        }
+
+        .error-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            background-color: #fff3cd;
+            color: #856404;
+            font-size: 14px;
+            padding: 20px;
+            text-align: center;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .error-icon {
+            font-size: 32px;
+        }
+
+        .error-message {
+            max-width: 400px;
+        }
+
+        .retry-button {
+            padding: 8px 16px;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .retry-button:hover {
+            background-color: #0052a3;
+        }
+
+        .status-bar {
+            background-color: #f9f9f9;
+            border-top: 1px solid #e0e0e0;
+            padding: 8px 20px;
+            font-size: 12px;
+            color: #999999;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .connection-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .connection-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #999999;
+        }
+
+        .connection-dot.connected {
+            background-color: #28a745;
+        }
+
+        .connection-dot.disconnected {
+            background-color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-shell">
+        <div class="chat-header">
+            <h1>AI Chat Assistant</h1>
+        </div>
+
+        <div class="chat-container">
+            <div class="chat-iframe-wrapper">
+                <div class="loading-indicator" id="loadingIndicator">
+                    <div class="spinner"></div>
+                    <div class="loading-text">Loading chat interface...</div>
+                </div>
+                <iframe id="chatIframe" class="chat-iframe" sandbox="allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms allow-modals" title="Agentic Chat UI"></iframe>
+            </div>
+        </div>
+
+        <div class="status-bar">
+            <span class="connection-indicator">
+                <span class="connection-dot" id="connectionIndicator"></span>
+                <span id="connectionStatus">Initializing...</span>
+            </span>
+            <span id="timestamp"></span>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * Agentic Chat Shell - Bridges communication between the Chat UI iframe and the backend
+         */
+
+        const CHAT_UI_URLS = {
+            Stage: "https://embed.stage.trimble-ai.com",
+            Prod: "https://embed.ai.trimble.com",
+            Dev: "https://embed.dev.trimble-ai.com"
+        };
+
+        const API_BASE_URL = window.location.origin;
+        const API_MESSAGE_URL = `${API_BASE_URL}/api/chat/message`;
+
+        function resolveEnvironment(config) {
+            const env = config?.environment ?? config?.Environment ?? 'Stage';
+            if (typeof env === 'string') {
+                return env.charAt(0).toUpperCase() + env.slice(1).toLowerCase() === 'prod' ? 'Prod' : 'Stage';
+            }
+            return 'Stage';
+        }
+
+        async function readJsonResponse(response) {
+            const text = await response.text();
+            const trimmed = text.trim();
+            if (trimmed.startsWith('<')) {
+                throw new Error(
+                    'Chat API returned HTML instead of JSON. Rebuild and redeploy the backend (ensure /api/chat/config is registered).'
+                );
+            }
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                throw new Error(`Invalid JSON from chat API: ${e.message}`);
+            }
+        }
+
+        let isConnected = false;
+        let chatIframe = document.getElementById('chatIframe');
+        let loadingIndicator = document.getElementById('loadingIndicator');
+        let connectionIndicator = document.getElementById('connectionIndicator');
+        let connectionStatus = document.getElementById('connectionStatus');
+        let timestamp = document.getElementById('timestamp');
+
+        /**
+         * Initialize the chat shell
+         */
+        async function initializeChat() {
+            try {
+                // Get the Chat UI configuration from the backend
+                const configResponse = await fetch(`${API_BASE_URL}/api/chat/config`, {
+                    method: 'GET',
+                    headers: apiHeaders()
+                });
+
+                if (!configResponse.ok) {
+                    if (configResponse.status === 401) {
+                        throw new Error('Not authorized. Sign in to DBA Dash again, then reopen chat.');
+                    }
+                    throw new Error(`Failed to load chat configuration: HTTP ${configResponse.status}`);
+                }
+
+                const config = await readJsonResponse(configResponse);
+                const envKey = resolveEnvironment(config);
+                const chatUiUrl = CHAT_UI_URLS[envKey] || CHAT_UI_URLS.Stage;
+
+                // Register bridge before embed loads (avoids missing early config/token requests)
+                setupMessageBridge();
+
+                // Load the Chat UI in the iframe
+                chatIframe.src = chatUiUrl;
+
+                updateConnectionStatus(true);
+                loadingIndicator.style.display = 'none';
+
+            } catch (error) {
+                console.error('Failed to initialize chat:', error);
+                showErrorState(error.message);
+                updateConnectionStatus(false);
+            }
+        }
+
+        /**
+         * Setup the message bridge between iframe and backend
+         */
+        function isTrustedChatOrigin(origin) {
+            const trusted = Object.values(CHAT_UI_URLS).map(url => new URL(url).origin);
+            return trusted.includes(origin);
+        }
+
+        function apiHeaders() {
+            const headers = {
+                'Authorization': `Bearer ${getAuthToken()}`,
+                'Content-Type': 'application/json'
+            };
+            const trimbleToken = getTrimbleToken();
+            if (trimbleToken) {
+                headers['X-Trimble-Access-Token'] = trimbleToken;
+            }
+            return headers;
+        }
+
+        function parseMessageData(data) {
+            if (data == null) return null;
+            if (typeof data === 'string') {
+                try {
+                    return JSON.parse(data);
+                } catch {
+                    return null;
+                }
+            }
+            if (typeof data === 'object') {
+                // Legacy wrapper from older shell versions
+                if (data.type === 'AGENTIC_MESSAGE' && data.payload != null) {
+                    return typeof data.payload === 'string' ? parseMessageData(data.payload) : data.payload;
+                }
+                return data;
+            }
+            return null;
+        }
+
+        function isTrimbleProtocolMessage(message) {
+            const type = message?.type;
+            return typeof type === 'string' && type.length > 0;
+        }
+
+        async function forwardToBackend(messageJson) {
+            const response = await fetch(API_MESSAGE_URL, {
+                method: 'POST',
+                headers: apiHeaders(),
+                body: messageJson
+            });
+
+            if (!response.ok) {
+                throw new Error(`Backend error: HTTP ${response.status}`);
+            }
+
+            return readJsonResponse(response);
+        }
+
+        function postToChatUi(payload, targetOrigin) {
+            if (!chatIframe?.contentWindow || payload == null) return;
+            const win = chatIframe.contentWindow;
+            win.postMessage(payload, targetOrigin);
+            if (typeof payload === 'object') {
+                win.postMessage(JSON.stringify(payload), targetOrigin);
+            }
+        }
+
+        let messageBridgeInstalled = false;
+
+        function setupMessageBridge() {
+            if (messageBridgeInstalled) return;
+            messageBridgeInstalled = true;
+
+            let chatUiOrigin = null;
+
+            window.addEventListener('message', async (event) => {
+                if (!isTrustedChatOrigin(event.origin)) {
+                    return;
+                }
+
+                chatUiOrigin = event.origin;
+
+                const message = parseMessageData(event.data);
+                if (!message || !isTrimbleProtocolMessage(message)) {
+                    return;
+                }
+
+                try {
+                    const messageJson = JSON.stringify(message);
+                    console.debug('[AgenticChat shell] → backend', message.type, message.requestId);
+                    const result = await forwardToBackend(messageJson);
+
+                    // Events (onNewChat, etc.) return no_response from backend
+                    if (result?.status === 'no_response') {
+                        updateConnectionStatus(true);
+                        return;
+                    }
+
+                    if (result && (result.Type || result.Configuration)) {
+                        throw new Error('Backend returned PascalCase JSON — redeploy DBADashWebView.dll');
+                    }
+
+                    console.debug('[AgenticChat shell] ← backend', result?.type);
+                    postToChatUi(result, event.origin);
+                    updateConnectionStatus(true);
+                } catch (error) {
+                    console.error('Error handling Trimble chat message:', error);
+                    updateConnectionStatus(false);
+                    postToChatUi({
+                        type: 'error',
+                        error: error.message,
+                        timestamp: new Date().toISOString()
+                    }, event.origin);
+                }
+            });
+
+        }
+
+        /**
+         * Get the authentication token from localStorage or session storage
+         */
+        function getAuthToken() {
+            // DBA Dashboard stores JWT as "token" (see frontend/src/api/api.ts)
+            let token = localStorage.getItem('token');
+            if (!token) {
+                token = sessionStorage.getItem('token');
+            }
+            if (!token) {
+                token = window.__AGENTIC_TOKEN__ || '';
+            }
+            return token;
+        }
+
+        function getTrimbleToken() {
+            let token = localStorage.getItem('trimbleToken');
+            if (!token) {
+                token = sessionStorage.getItem('trimbleToken');
+            }
+            if (!token) {
+                token = window.__TRIMBLE_TOKEN__ || '';
+            }
+            return token;
+        }
+
+        /**
+         * Update connection status indicator
+         */
+        function updateConnectionStatus(connected) {
+            isConnected = connected;
+            const dot = connectionIndicator;
+            const status = connectionStatus;
+
+            if (connected) {
+                dot.classList.add('connected');
+                dot.classList.remove('disconnected');
+                status.textContent = 'Connected';
+                status.style.color = '#28a745';
+            } else {
+                dot.classList.add('disconnected');
+                dot.classList.remove('connected');
+                status.textContent = 'Disconnected';
+                status.style.color = '#dc3545';
+            }
+
+            // Update timestamp
+            const now = new Date();
+            timestamp.textContent = now.toLocaleTimeString();
+        }
+
+        /**
+         * Show error state in the chat container
+         */
+        function showErrorState(errorMessage) {
+            loadingIndicator.style.display = 'none';
+            const errorContainer = document.createElement('div');
+            errorContainer.className = 'error-container';
+            errorContainer.innerHTML = `
+                <div class="error-icon">⚠️</div>
+                <div class="error-message">
+                    <strong>Failed to load chat interface</strong><br>
+                    ${errorMessage}
+                </div>
+                <button class="retry-button" onclick="location.reload()">Retry</button>
+            `;
+
+            chatIframe.style.display = 'none';
+            chatIframe.parentElement.appendChild(errorContainer);
+        }
+
+        /**
+         * Update the chat configuration at runtime
+         */
+        async function updateChatConfig(newConfig) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/chat/config/update`, {
+                    method: 'POST',
+                    headers: apiHeaders(),
+                    body: JSON.stringify(newConfig)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Failed to update configuration: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+
+                // Send update to iframe
+                if (chatIframe && chatIframe.contentWindow) {
+                    chatIframe.contentWindow.postMessage({
+                        type: 'CONFIG_UPDATED',
+                        payload: result
+                    }, '*');
+                }
+
+                return result;
+            } catch (error) {
+                console.error('Error updating chat configuration:', error);
+                throw error;
+            }
+        }
+
+        /**
+         * Cleanup on unload
+         */
+        window.addEventListener('beforeunload', () => {
+            if (chatIframe && chatIframe.contentWindow) {
+                chatIframe.contentWindow.postMessage({
+                    type: 'SHELL_CLOSING'
+                }, '*');
+            }
+        });
+
+        // Initialize the chat when the page loads
+        window.addEventListener('load', initializeChat);
+
+        // Expose functions to global scope for external access
+        window.AgenticChatShell = {
+            updateConfig: updateChatConfig,
+            getConnectionStatus: () => isConnected
+        };
+    </script>
+</body>
+</html>

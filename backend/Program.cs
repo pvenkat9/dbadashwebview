@@ -43,6 +43,8 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+AgenticChatLoader.TryConfigure(builder);
+
 var app = builder.Build();
 app.UseCors();
 app.UseDefaultFiles();
@@ -68,14 +70,20 @@ AdConfig LoadAdConfig()
 {
     if (!File.Exists(adConfigPath)) return new AdConfig();
     var json = File.ReadAllText(adConfigPath);
-    return JsonSerializer.Deserialize<AdConfig>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new AdConfig();
+    return System.Text.Json.JsonSerializer.Deserialize<AdConfig>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new AdConfig();
 }
 
 void SaveAdConfig(AdConfig cfg)
 {
-    var json = JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+    var json = System.Text.Json.JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
     File.WriteAllText(adConfigPath, json);
 }
+
+// ── AD Login Logic ───────────────────────────────────────────────────────
+
+static string EscapeLdap(string s) =>
+    string.IsNullOrEmpty(s) ? "" : s.Replace("\\", "\\5c").Replace("*", "\\2a")
+     .Replace("(", "\\28").Replace(")", "\\29").Replace("\0", "\\00");
 
 bool TryAdLogin(string username, string password, AdConfig cfg, out string? displayName, out List<string> groups)
 {
@@ -86,52 +94,58 @@ bool TryAdLogin(string username, string password, AdConfig cfg, out string? disp
     try
     {
         var userPrincipal = $"{username}@{cfg.Domain}";
-        var ldapServer = cfg.Server;
         var port = cfg.Port > 0 ? cfg.Port : (cfg.UseSsl ? 636 : 389);
-
-        var ldapId = new LdapDirectoryIdentifier(ldapServer, port);
+        var ldapId = new LdapDirectoryIdentifier(cfg.Server, port);
         var cred = new NetworkCredential(userPrincipal, password);
-        using var conn = new LdapConnection(ldapId, cred, AuthType.Basic);
+
+        using var conn = new LdapConnection(ldapId, cred, AuthType.Negotiate);
         conn.SessionOptions.ProtocolVersion = 3;
         if (cfg.UseSsl) conn.SessionOptions.SecureSocketLayer = true;
-        conn.Bind(); // throws on bad creds
+        conn.Bind();
 
-        // Search for user to get display name and groups
-        var baseDn = cfg.BaseDn;
-        if (string.IsNullOrEmpty(baseDn))
-            baseDn = string.Join(",", cfg.Domain.Split('.').Select(p => $"DC={p}"));
+        var baseDn = string.IsNullOrEmpty(cfg.BaseDn)
+            ? string.Join(",", cfg.Domain.Split('.').Select(p => $"DC={p}"))
+            : cfg.BaseDn;
 
-        var filter = $"(&(objectClass=user)(sAMAccountName={username}))";
-        var searchReq = new SearchRequest(baseDn, filter, SearchScope.Subtree, "displayName", "memberOf", "sAMAccountName");
+        var filter = $"(&(objectClass=user)(sAMAccountName={EscapeLdap(username)}))";
+        var searchReq = new SearchRequest(baseDn, filter, SearchScope.Subtree,
+            "displayName", "memberOf", "sAMAccountName");
         var searchRes = (SearchResponse)conn.SendRequest(searchReq);
 
         if (searchRes.Entries.Count > 0)
         {
             var entry = searchRes.Entries[0];
+            
+            // Safely extract DisplayName (handling byte array conversion if necessary)
             if (entry.Attributes.Contains("displayName"))
-                displayName = entry.Attributes["displayName"][0]?.ToString();
+            {
+                var dnAttr = entry.Attributes["displayName"][0];
+                displayName = dnAttr is byte[] b ? Encoding.UTF8.GetString(b) : dnAttr?.ToString();
+            }
+
+            // Safely extract Groups (handling byte array conversion if necessary)
             if (entry.Attributes.Contains("memberOf"))
             {
                 foreach (var g in entry.Attributes["memberOf"])
                 {
-                    var groupDn = g?.ToString() ?? "";
-                    var cn = groupDn.Split(',').FirstOrDefault(p => p.StartsWith("CN=", StringComparison.OrdinalIgnoreCase));
+                    var groupDn = g is byte[] b ? Encoding.UTF8.GetString(b) : g?.ToString() ?? "";
+                    var cn = groupDn.Split(',')
+                        .FirstOrDefault(p => p.StartsWith("CN=", StringComparison.OrdinalIgnoreCase));
                     if (cn != null) groups.Add(cn[3..]);
                 }
             }
         }
 
-        // Check required group
-        if (!string.IsNullOrEmpty(cfg.RequiredGroup))
-        {
-            if (!groups.Any(g => g.Equals(cfg.RequiredGroup, StringComparison.OrdinalIgnoreCase)))
-                return false;
-        }
+        Console.WriteLine($"[AD Login] '{username}' groups: [{string.Join(", ", groups)}]");
 
-        return true;
+        if (string.IsNullOrEmpty(cfg.RequiredGroup))
+            return true;
+
+        return groups.Any(g => g.Equals(cfg.RequiredGroup, StringComparison.OrdinalIgnoreCase));
     }
-    catch
+    catch (Exception ex)
     {
+        Console.WriteLine($"[AD Login Error] {ex.GetType().Name}: {ex.Message}");
         return false;
     }
 }
@@ -2757,7 +2771,7 @@ app.MapGet("/api/reports/backup-ampel", async () =>
                 LEFT JOIN dbo.DatabasesHADR h ON d.DatabaseID = h.DatabaseID AND h.is_local = 1
                 LEFT JOIN dbo.AvailabilityGroups ag ON h.group_id = ag.group_id AND ag.InstanceID = d.InstanceID
                 LEFT JOIN LatestBackups f ON d.DatabaseID = f.DatabaseID AND f.type='D' AND f.rn=1
-                LEFT JOIN LatestBackups df ON d.DatabaseID = df.DatabaseID AND df.type='I' AND df.rn=1
+                LEFT JOIN LatestBackups df ON d.DatabaseID = df.DatabaseID AND df.type='I' AND f.rn=1
                 LEFT JOIN LatestBackups l ON d.DatabaseID = l.DatabaseID AND l.type='L' AND l.rn=1
                 WHERE d.IsActive = 1 AND d.name NOT IN ('master','model','msdb','tempdb')
                 ORDER BY d.InstanceID, d.name");
@@ -3177,7 +3191,9 @@ app.MapGet("/api/debug/summary/{id:int}", async (int id) =>
     }
 }).RequireAuthorization();
 
-// SPA fallback — serve index.html for all non-API routes
+AgenticChatLoader.TryMapEndpoints(app);
+
+// SPA fallback — serve index.html for non-API routes (must be after /api/chat/*)
 app.MapFallbackToFile("index.html");
 
 app.Run();

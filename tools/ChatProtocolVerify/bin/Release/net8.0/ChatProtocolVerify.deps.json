@@ -1,0 +1,59 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "ChatProtocolVerify/1.0.0": {
+        "dependencies": {
+          "Trimble.AgenticChat.Core": "0.1.0-rc.13"
+        },
+        "runtime": {
+          "ChatProtocolVerify.dll": {}
+        }
+      },
+      "Newtonsoft.Json/13.0.4": {
+        "runtime": {
+          "lib/net6.0/Newtonsoft.Json.dll": {
+            "assemblyVersion": "13.0.0.0",
+            "fileVersion": "13.0.4.30916"
+          }
+        }
+      },
+      "Trimble.AgenticChat.Core/0.1.0-rc.13": {
+        "dependencies": {
+          "Newtonsoft.Json": "13.0.4"
+        },
+        "runtime": {
+          "lib/netstandard2.0/Trimble.AgenticChat.Core.dll": {
+            "assemblyVersion": "0.1.0.0",
+            "fileVersion": "0.1.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "ChatProtocolVerify/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Newtonsoft.Json/13.0.4": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-pdgNNMai3zv51W5aq268sujXUyx7SNdE2bj1wZcWjAQrKMFZV260lbqYop1d2GM67JI1huLRwxo9ZqnfF/lC6A==",
+      "path": "newtonsoft.json/13.0.4",
+      "hashPath": "newtonsoft.json.13.0.4.nupkg.sha512"
+    },
+    "Trimble.AgenticChat.Core/0.1.0-rc.13": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-1XYMI2Vk8gPInLYCMvvUU/2tLuxz5ebhpF6qj1DI8GcSwiMfMXT8fS0LosyCGdlxEtMJJwgJ9UOkJrFYSrwdXw==",
+      "path": "trimble.agenticchat.core/0.1.0-rc.13",
+      "hashPath": "trimble.agenticchat.core.0.1.0-rc.13.nupkg.sha512"
+    }
+  }
+}
