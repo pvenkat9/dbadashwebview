@@ -8,7 +8,7 @@
 
 *Browser-based companion to [DBA Dash](https://github.com/trimble-oss/dba-dash) — monitor hundreds of SQL Servers from any device.*
 
-[![Build](https://github.com/BenediktSchackenberg/dbadashwebview/actions/workflows/build.yml/badge.svg)](https://github.com/BenediktSchackenberg/dbadashwebview/actions/workflows/build.yml)
+[![Build](https://github.com/e-buildernoc/DBADash-WebView/actions/workflows/build.yml/badge.svg)](https://github.com/e-buildernoc/DBADash-WebView/actions/workflows/build.yml)
 [![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-purple.svg)](https://dotnet.microsoft.com/)
 [![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)
@@ -187,12 +187,13 @@ Purpose-built reports for IT managers:
 | Requirement | Version |
 |-------------|---------|
 | [DBA Dash](https://github.com/trimble-oss/dba-dash) | Any (populated DBADashDB required) |
-| [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) | 8.0+ (Hosting Bundle for IIS) |
+| [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) | 8.0+ (Required for building from source) |
+| [Node.js](https://nodejs.org/) | v18+ (Required for frontend development) |
 | SQL Server | 2012+ |
 
-### Download & Run
+### Option A: For Users (Pre-Compiled Release)
 
-1. Download the latest release from [Releases](https://github.com/BenediktSchackenberg/dbadashwebview/releases)
+1. Download the latest release from [Releases](https://github.com/e-buildernoc/DBADash-WebView/releases)
 2. Extract the ZIP
 3. Edit `appsettings.json`:
 
@@ -202,15 +203,64 @@ Purpose-built reports for IT managers:
     "DBADashDB": "Server=YOUR_SQL_SERVER;Database=DBADashDB;User Id=YOUR_USER;Password=YOUR_PASSWORD;TrustServerCertificate=true;"
   }
 }
+
 ```
 
 4. Deploy to IIS (see below) or run standalone:
+
 ```bash
 dotnet DBADashWebView.dll
 # Open http://localhost:5000
+
 ```
 
-5. Login with `admin` / `admin` (change this in production!)
+5. Login with `admin` / `admin` *(change this in production!)*
+
+### Option B: For Developers (Build from Source)
+
+Because compiled binaries are not tracked in version control, you must build the project locally using our automation scripts after cloning.
+
+1. **Clone the repository:**
+
+```bash
+git clone [https://github.com/e-buildernoc/DBADash-WebView.git](https://github.com/e-buildernoc/DBADash-WebView.git)
+cd DBADash-WebView
+
+```
+
+2. **Install Dependencies:**
+Make sure all node packages and .NET packages are pulled down before initiating a build:
+
+```bash
+cd frontend && npm install && cd ../backend && dotnet restore && cd ..
+
+```
+
+3. **Execute Build & Hot-Deploy Automation Scripts:**
+Run the custom project scripts located in the scripts folder to compile and structure the platform artifacts:
+
+```bash
+# Ensure scripts have execute permissions
+chmod +x ./scripts/*.sh
+
+# Compile backend and package the frontend single page app assets
+./scripts/build-publish.sh
+
+# Prepare the chat orchestration plugin hot-deploy matrix
+./scripts/prepare-chat-hot-deploy.sh
+
+```
+
+4. **Run the Application locally:**
+
+```bash
+# Inside the backend directory
+cd backend
+dotnet run
+
+```
+
+*(The backend Minimal API will serve the frontend assets on `http://localhost:5000`. Alternatively, run `npm run dev` in the frontend folder for hot-module reloading).*
 
 ---
 
@@ -222,6 +272,7 @@ Download from [Microsoft](https://dotnet.microsoft.com/download/dotnet/8.0) → 
 
 ```powershell
 iisreset  # Required after installing the Hosting Bundle
+
 ```
 
 ### 2. Create the IIS Site
@@ -241,6 +292,7 @@ New-Website -Name "DBADashWebView" -PhysicalPath "C:\inetpub\dbadash" `
 
 # Grant read permissions
 icacls "C:\inetpub\dbadash" /grant "IIS AppPool\DBADashWebView:(OI)(CI)R" /T
+
 ```
 
 ### 3. Configure Connection String
@@ -252,7 +304,7 @@ Edit `C:\inetpub\dbadash\appsettings.json` — set your DBADashDB server, creden
 ### Troubleshooting
 
 | Symptom | Fix |
-|---------|-----|
+| --- | --- |
 | 502.5 / 500.30 | Install the Hosting Bundle, then `iisreset` |
 | Blank page, no errors | Check connection string — server reachable? Correct DB name? |
 | No instances showing | SQL user needs `db_datareader` on DBADashDB |
@@ -261,9 +313,10 @@ Edit `C:\inetpub\dbadash\appsettings.json` — set your DBADashDB server, creden
 | CORS errors | Deploy frontend and backend together (same origin) |
 
 Enable detailed logging:
+
 ```xml
-<!-- In web.config -->
 <aspNetCore stdoutLogEnabled="true" stdoutLogFile=".\logs\stdout" ... />
+
 ```
 
 ---
@@ -280,6 +333,7 @@ CREATE LOGIN [dbadashweb] WITH PASSWORD = 'YourSecurePassword';
 CREATE USER [dbadashweb] FOR LOGIN [dbadashweb];
 ALTER ROLE db_datareader ADD MEMBER [dbadashweb];
 GRANT EXECUTE ON SCHEMA::dbo TO [dbadashweb];
+
 ```
 
 ### Active Directory Authentication
@@ -295,6 +349,7 @@ Configure via **Settings → Users → LDAP tab**, or directly edit `config/ad-c
   "AdminGroup": "CN=DBA-Admins,OU=Groups,DC=corp,DC=local",
   "AllowLocalFallback": true
 }
+
 ```
 
 When `AllowLocalFallback` is true, the built-in `admin` account still works when AD is unreachable.
@@ -309,106 +364,126 @@ Configure via **Settings → Thresholds**. Define warning and critical levels pe
 
 All endpoints require JWT authentication via `Authorization: Bearer <token>` header.
 
-<details>
-<summary><strong>Authentication</strong></summary>
+* **`POST /api/auth/login`**
+Authenticates security credentials against configured Local/Active Directory directories, returning a signed JWT authorization string.
+* **`GET /api/health`**
+Public, unauthenticated heartbeat indicator validating that the ASP.NET routing engine and database thread-pools are active.
 
-```
-POST /api/auth/login              { "username": "...", "password": "..." }  →  { "token": "..." }
-GET  /api/health                  Health check (no auth required)
-```
-</details>
+* **`GET /api/dashboard/summary`**
+Pipes processed metric arrays out of `dbo.Summary_Get` to feed the main OK/Warning/Critical fleet matrix.
+* **`GET /api/dashboard/stats`**
+Exposes high-level server metrics: overall system alerts, database size rankings, and top processor consumers.
+* **`GET /api/dashboard/performance-summary`**
+Populates tabular rows comparing current CPU usage, wait counts, and I/O latency metrics across the fleet.
+* **`GET /api/dashboard/monitor`**
+Powers the Redgate-style monitoring grid view, supplying live health scores and server state cards.
+* **`GET /api/tree`**
+Compiles the expandable navigation sidebar tree layout, grouping instances cleanly by SQL version.
+* **`GET /api/instances`**
+Returns a global index listing of every monitored database engine instance along with its configuration attributes.
+* **`GET /api/instances/{id}`**
+Fetches the targeted overview metrics and state attributes for a single designated server instance.
 
-<details>
-<summary><strong>Dashboard & Navigation</strong></summary>
+These endpoints fetch specialized data context filterable by a specific managed instance ID (`{id}`).
 
-```
-GET /api/dashboard/summary                  Raw Summary_Get (status matrix data)
-GET /api/dashboard/stats                    KPIs, top CPU, largest DBs, alerts
-GET /api/dashboard/performance-summary      Performance summary table
-GET /api/dashboard/monitor                  SQL Monitor card grid + alerts
-GET /api/tree                               Instance tree with databases (for sidebar)
-GET /api/instances                          All instances with version info
-GET /api/instances/{id}                     Instance detail + Summary_Get row
-```
-</details>
+* **`GET /api/instances/{id}/cpu`**
+Retrieves granular CPU usage logs, historical processor utilization breakdowns, and operating system scheduling metrics for the designated target server.
+* **`GET /api/instances/{id}/waits`**
+Returns aggregated SQL Server instance-level wait statistics, mapped by wait classification types, to facilitate diagnostic performance isolation.
+* **`GET /api/instances/{id}/drives`**
+Fetches logical block volume configurations and drive storage capacities. Maps threshold alerts based on remaining storage percentages.
+* **`GET /api/instances/{id}/databases`**
+Returns catalog metadata regarding all tracked database configurations on the host instance, describing state flags, compatibility levels, and structural definitions.
+* **`GET /api/instances/{id}/backups`**
+Provides database backup compliance history, listing timestamps for the latest Full, Differential, and Transaction Log execution states.
+* **`GET /api/instances/{id}/jobs`**
+Extracts SQL Server Agent engine telemetry, parsing job definitions, history success/failure tables, and execution step error logs.
+* **`GET /api/instances/{id}/queries`**
+Summarizes high-impact query footprints or execution frequencies mapped to this instance token.
+* **`GET /api/instances/{id}/hadr`**
+Provides replication node telemetry detailing AlwaysOn High Availability and Disaster Recovery alignments, preferred routing topologies, and cluster definitions.
 
-<details>
-<summary><strong>Per-Instance Data</strong></summary>
+Endpoints configured to analyze diagnostic wait metrics, performance counters, or runtime profiles.
 
-```
-GET /api/instances/{id}/cpu
-GET /api/instances/{id}/waits
-GET /api/instances/{id}/drives
-GET /api/instances/{id}/databases
-GET /api/instances/{id}/backups
-GET /api/instances/{id}/jobs
-GET /api/instances/{id}/queries
-GET /api/instances/{id}/hadr
-```
-</details>
+* **`GET /api/performance/running-queries?instanceId=`**
+Exposes executing session profiles on the engine thread pool, mapping wait patterns, execution context tokens, and command text structures.
+* **`GET /api/performance/blocking?instanceId=`**
+Constructs active engine transaction block graphs, isolating head blocker nodes, root lock contentions, and resource chain graphs.
+* **`GET /api/performance/slow-queries?instanceId=&hours=24`**
+Queries Extended Events telemetry collectors to compile queries exceeding engine speed thresholds inside the designated window parameters.
+* **`GET /api/performance/memory?instanceId=`**
+Maps instance memory allocations, caching layer distribution tables, Buffer Pool capacities, and Page Life Expectancy (PLE) status metrics.
+* **`GET /api/performance/io?instanceId=`**
+Documents drive and database physical file file-stall latencies, tracking read/write processing rates and IOPS limitations.
+* **`GET /api/performance/exec-stats?instanceId=&hours=24`**
+Evaluates execution plan efficiency records, highlighting execution count histograms and duration metrics for compiled objects.
+* **`GET /api/performance/waits-timeline?instanceId=&hours=24`**
+Populates time-series data visualization arrays for tracked server wait components inside the monitoring window.
+* **`GET /api/performance/counters?instanceId=&hours=24`**
+Extracts custom operating system and engine counter tables (e.g., User Connections, Batch Requests/sec) mapped to user threshold definitions.
+* **`GET /api/performance/query-store?instanceId=`**
+Connects to native engine Query Store catalog data tables to summarize highest consumer traces across the server environment.
 
-<details>
-<summary><strong>Performance Monitoring</strong></summary>
+Enables compliance tracking, environment drifts, identity usage, space monitoring, and patching history tracking.
 
-```
-GET /api/performance/running-queries?instanceId=
-GET /api/performance/blocking?instanceId=
-GET /api/performance/slow-queries?instanceId=&hours=24
-GET /api/performance/memory?instanceId=
-GET /api/performance/io?instanceId=
-GET /api/performance/exec-stats?instanceId=&hours=24
-GET /api/performance/waits-timeline?instanceId=&hours=24
-GET /api/performance/counters?instanceId=&hours=24
-GET /api/performance/query-store?instanceId=
-```
-</details>
+* **`GET /api/monitoring/job-timeline?instanceId=&hours=24`**
+Formats historical SQL Agent workflow schedules into Gantt-chart timeline coordinate streams for tracking concurrent jobs and overlapping paths.
+* **`GET /api/monitoring/configuration?instanceId=`**
+Dumps localized engine infrastructure system variables retrieved directly from `sys.configurations` registries.
+* **`GET /api/monitoring/configuration/changes?instanceId=&days=30`**
+Provides systemic diff audit logs recording explicit configuration updates or adjustments inside the designated tracking interval.
+* **`GET /api/monitoring/patching`**
+Aggregates estate-wide build versions, patch states, release update indicators, and cumulative updates across the managed topology.
+* **`GET /api/monitoring/schema-changes?instanceId=&days=30`**
+Parses DDL structural change history tables to map configuration updates, object dropped notifications, or index modifications.
+* **`GET /api/monitoring/identity-columns?instanceId=`**
+Validates structural range bounds across tables, highlighting columns approaching field maximums to prevent identity allocation exhaustion errors.
+* **`GET /api/monitoring/tempdb?instanceId=`**
+Pipes runtime operational health charts for the TempDB structures, parsing allocation spaces, tracking version stores, and scanning object contentions.
+* **`GET /api/monitoring/db-space?instanceId=`**
+Exposes logical database file metrics, providing space tracking calculations and auto-growth threshold indicators.
 
-<details>
-<summary><strong>Monitoring & Tracking</strong></summary>
+Provides estate-wide audits, unified error metrics, licensing overviews, underutilized resource reporting, and advanced backup compliance tracking.
 
-```
-GET /api/monitoring/job-timeline?instanceId=&hours=24
-GET /api/monitoring/configuration?instanceId=
-GET /api/monitoring/configuration/changes?instanceId=&days=30
-GET /api/monitoring/patching
-GET /api/monitoring/schema-changes?instanceId=&days=30
-GET /api/monitoring/identity-columns?instanceId=
-GET /api/monitoring/tempdb?instanceId=
-GET /api/monitoring/db-space?instanceId=
-```
-</details>
+* **`GET /api/alerts/recent`**
+Consolidates multi-instance faults across the entire fleet, tracking collectors' telemetry faults and failed job steps over the past 48 hours.
+* **`GET /api/jobs/recent`**
+Aggregates the execution history of recent automated tasks across the ecosystem, feeding into unified operational tracking grids.
+* **`GET /api/jobs/failures`**
+Isolates active job exceptions and failures, compiling exact step crash reports, exit codes, and runtime engine messages.
+* **`GET /api/drives`**
+Gathers storage information globally across all managed drives to identify critical capacity shortages and usage velocity alerts.
+* **`GET /api/backups/estate`**
+Evaluates global ecosystem backup profiles to flag systems lacking protection plans, schedule deviations, or policy gaps.
+* **`GET /api/backups/management`**
+Exposes compliance analytics for IT managers, showing average vs. worst-case RPO statistics and recovery projection timelines.
+* **`GET /api/availability-groups`**
+Maps cross-instance AlwaysOn networks, illustrating active primary/secondary topologies, replication metrics, and cluster roles.
+* **`GET /api/availability-groups/{id}`**
+Drills down into node layouts, listener routing configurations, and replication delay vectors matching the specific instance identification token.
+* **`GET /api/reports/licenses`**
+Audits core allocations, software distribution topologies, and license profiles across environments. Includes life-cycle markers for end-of-support timelines.
+* **`GET /api/reports/underutilized`**
+Analyzes systemic workloads to identify servers averaging under 5% CPU capacity for infrastructure consolidation or downsizing candidates.
+* **`GET /api/reports/fleet-stats`**
+Compiles summary telemetry matrices describing infrastructure distributions, storage maps, and version distribution charts.
+* **`GET /api/reports/backup-ampel`**
+Feeds the traffic-light compliance engine, calculating green/yellow/red status trees while properly evaluating AlwaysOn secondary nodes and Simple recovery rules.
 
-<details>
-<summary><strong>Estate & Reporting</strong></summary>
+Manages identity synchronization rules, portal metric alerting thresholds, loopback execution test paths, and unparsed procedure traces.
 
-```
-GET /api/alerts/recent                     Collection errors + failed jobs (48h)
-GET /api/jobs/recent
-GET /api/jobs/failures
-GET /api/drives                            All drives across fleet
-GET /api/backups/estate                    Estate-wide backup overview
-GET /api/backups/management                Backup & Recovery management view
-GET /api/availability-groups               Fleet-wide AG overview
-GET /api/availability-groups/{id}          Per-instance HA/DR
-GET /api/reports/licenses                  License & version overview
-GET /api/reports/underutilized             Underutilized server analysis
-GET /api/reports/fleet-stats               Fleet resource statistics
-GET /api/reports/backup-ampel              Backup Ampel (traffic-light report)
-```
-</details>
-
-<details>
-<summary><strong>Settings & Debug</strong></summary>
-
-```
-GET  /api/settings/ad                      AD/LDAP configuration
-POST /api/settings/ad                      Update AD config
-POST /api/settings/ad/test                 Test AD login
-GET  /api/settings/thresholds              Dashboard thresholds
-POST /api/settings/thresholds              Update thresholds
-GET  /api/debug/summary/{id}               Raw Summary_Get output (troubleshooting)
-```
-</details>
+* **`GET /api/settings/ad`**
+Retrieves configured LDAP connection strings, security base directories, and Active Directory group-based role mappings.
+* **`POST /api/settings/ad`**
+Saves or modifies secure configuration arrays for Active Directory synchronization workflows and fallback admin settings.
+* **`POST /api/settings/ad/test`**
+Triggers a secure real-time authentication test loop to validate connections to the configured LDAP directory services.
+* **`GET /api/settings/thresholds`**
+Loads current global parameters for dashboard color thresholds, setting the points where alerts shift to caution or danger states.
+* **`POST /api/settings/thresholds`**
+Commits customized warning and critical ranges for systemic monitoring metrics (e.g., CPU maps, stall latency thresholds).
+* **`GET /api/debug/summary/{id}`**
+Dumps the raw, unparsed JSON output directly from `dbo.Summary_Get` for an instance token to speed up developer troubleshooting and trace analysis.
 
 ---
 
@@ -430,10 +505,11 @@ GET  /api/debug/summary/{id}               Raw Summary_Get output (troubleshooti
                                                      │  Server Fleet   │
                                                      │  (10–1000+)     │
                                                      └─────────────────┘
+
 ```
 
 | Layer | Technology |
-|-------|-----------|
+| --- | --- |
 | **Frontend** | React 19, TypeScript, Vite, Tailwind CSS 4, Recharts, Framer Motion, Lucide Icons |
 | **Backend** | ASP.NET Core 8 Minimal API, Microsoft.Data.SqlClient |
 | **Auth** | JWT tokens + optional LDAP/Active Directory |
@@ -443,7 +519,7 @@ GET  /api/debug/summary/{id}               Raw Summary_Get output (troubleshooti
 ### Page Count: 46
 
 | Category | Pages |
-|----------|-------|
+| --- | --- |
 | Dashboard & Navigation | 5 (Summary, Tabbed Dashboard, SQL Monitor, Performance Summary, Tree) |
 | Performance Monitoring | 10 (Running Queries, Blocking, Slow Queries, Waits, Memory, IO, Exec Stats, Counters, Query Store, Analysis) |
 | Daily Health Checks | 6 (Backups, Jobs, Job Timeline, Drives, DB Space, TempDB) |
@@ -459,54 +535,29 @@ GET  /api/debug/summary/{id}               Raw Summary_Get output (troubleshooti
 WebView correctly maps the `DBADashStatusEnum` values used throughout `dbo.Summary_Get` and all status columns:
 
 | Value | Enum | Color | Meaning |
-|-------|------|-------|---------|
+| --- | --- | --- | --- |
 | 1 | Critical | 🔴 Red | Immediate attention required |
 | 2 | Warning | 🟡 Yellow | Threshold exceeded, review needed |
 | 3 | N/A | ⚪ Gray | Check not applicable / not configured |
 | 4 | OK | 🟢 Green | All good |
 | 5 | Acknowledged | 🔵 Blue | Known issue, acknowledged by admin |
 
-> **Note:** This is the opposite of what you might expect (1=worst, not best). Verified against [`DBADashGUI/DBAChecksStatus.cs`](https://github.com/trimble-oss/dba-dash/blob/main/DBADashGUI/DBAChecksStatus.cs).
-
----
-
-## 🔨 Building from Source
-
-```bash
-git clone https://github.com/BenediktSchackenberg/dbadashwebview.git
-cd dbadashwebview
-
-# Frontend
-cd frontend
-npm install
-npm run build
-cd ..
-
-# Backend (publishes to ./publish)
-cd backend
-dotnet publish -c Release -o ../publish
-cd ..
-
-# Combine: copy SPA into wwwroot
-cp -r frontend/dist/* publish/wwwroot/
-```
-
-The `publish/` folder is ready for IIS deployment.
+> **Note:** This is the opposite of what you might expect (1=worst, not best). Verified against [`DBADashGUI/DBAChecksStatus.cs`](https://www.google.com/search?q=https://github.com/trimble-oss/dba-dash/blob/main/DBADashGUI/DBAChecksStatus.cs).
 
 ---
 
 ## 🗺️ Roadmap
 
-- [ ] Scheduled PDF reports via email
-- [ ] Multi-tenant support (multiple DBADashDB repositories)
-- [ ] Custom dashboard layouts (drag & drop widgets)
-- [ ] Webhook / Teams / Slack notifications
-- [ ] Dark/Light theme toggle
-- [ ] SignalR real-time push updates (replace polling)
-- [ ] Export to CSV/Excel from any table
-- [ ] Mobile-optimized views for on-call DBAs
-- [ ] Integration with Grafana / Prometheus exporters
-- [ ] Automated health score per instance
+* [ ] Scheduled PDF reports via email
+* [ ] Multi-tenant support (multiple DBADashDB repositories)
+* [ ] Custom dashboard layouts (drag & drop widgets)
+* [ ] Webhook / Teams / Slack notifications
+* [ ] Dark/Light theme toggle
+* [ ] SignalR real-time push updates (replace polling)
+* [ ] Export to CSV/Excel from any table
+* [ ] Mobile-optimized views for on-call DBAs
+* [ ] Integration with Grafana / Prometheus exporters
+* [ ] Automated health score per instance
 
 ---
 
@@ -518,6 +569,7 @@ Contributions welcome! Fork the repo, create a feature branch, and submit a PR.
 git checkout -b feature/my-feature
 git commit -m 'feat: add my feature'
 git push origin feature/my-feature
+
 ```
 
 Please ensure `npm run build` and `dotnet build` pass before submitting.
@@ -536,16 +588,12 @@ DBA Dash WebView is an **independent project** that provides a web frontend for 
 
 ## 📄 License
 
-[MIT](LICENSE) — DBA Dash WebView
+[MIT](https://www.google.com/search?q=LICENSE) — DBA Dash WebView
 
 [Apache 2.0](https://github.com/trimble-oss/dba-dash/blob/main/LICENSE) — DBA Dash
 
 ---
 
-<div align="center">
-
-**Built by [Benedikt Schackenberg](https://github.com/BenediktSchackenberg)**
+**Built by [e-buildernoc**](https://github.com/e-buildernoc)
 
 *If this project helps you, give it a ⭐!*
-
-</div>
