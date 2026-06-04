@@ -2,6 +2,9 @@
 backend/bin/
 backend/obj/
 backend/Properties/launchSettings.json
+*.dll
+*.pdb
+*.exe
 
 # Node
 frontend/node_modules/
